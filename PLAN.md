@@ -33,7 +33,7 @@ all need a local process in *every* variant of this project.
 │                                                                             │
 │   Backend — Erlang target (wisp + mist)      Frontend — JS target          │
 │   ─────────────────────────────────          ───────────────────────        │
-│   · Jira REST client (`req`, Basic auth)     · lustre app (MVU)            │
+│   · Jira REST client (gleam_httpc, Basic auth) · lustre app (MVU)            │
 │   · JSON types + decoders  ◄── shared code, compiles to both ──►           │
 │   · ADF → lustre Element converter                                          │
 │   · sqlight: cache + my orderings      · lustre_http: fetch localhost JSON │
@@ -79,12 +79,17 @@ CREATE TABLE views (
 
 ## 3. Packages
 
-- **Backend (Erlang target):** `wisp`, `mist`, `req`, `gleam_json`, `sqlight`,
-  `envoy` and/or `dot_env`
+- **Backend (Erlang target):** `wisp`, `mist`, `gleam_httpc`, `gleam_json`,
+  `sqlight`, `envoy`
 - **Frontend (JS target):** `lustre`, `lustre_ui`, `lustre_http`
 - **JS (bundled):** SortableJS (drag-and-drop)
 - **Tooling/testing:** `gleeunit` on decoders + ADF converter first; official
   Lustre templates / `lustre` dev flow for the JS build
+- **Target split (learned at Phase 0):** this package's Erlang-only
+  dependencies (`wisp`, `mist`, `envoy`, `gleam_erlang`, `gleam_httpc`) would
+  make `gleam build --target javascript` fail on it. Before the Lustre work
+  starts, the shared types + decoders move to a pure package (or module set)
+  with no Erlang-only imports; server-only code stays behind.
 
 ---
 

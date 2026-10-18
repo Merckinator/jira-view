@@ -1,24 +1,19 @@
 # jira_view
 
-[![Package Version](https://img.shields.io/hexpm/v/jira_view)](https://hex.pm/packages/jira_view)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://jira-view.hexdocs.pm/)
+A private, local front-end for Jira Cloud — views, filters, and manually
+re-ordered issues that live on your machine only (see [PLAN.md](PLAN.md)).
 
-```sh
-gleam add jira_view@1
-```
-```gleam
-import jira_view
+Currently Phase 0: a server on 127.0.0.1 with `GET /api/me`, which proves the
+configured Jira credentials and returns your identity.
 
-pub fn main() -> Nil {
-  // TODO: An example of the project in use
-}
-```
+## Run
 
-Further documentation can be found at <https://jira-view.hexdocs.pm/>.
+1. Copy `.env.example` to `.env` and fill it in. Create an API token at
+   <https://id.atlassian.com/manage-profile/security/api-tokens>.
+2. `./dev.sh`, then open <http://127.0.0.1:8787/api/me>.
 
 ## Development
 
 ```sh
-gleam run   # Run the project
 gleam test  # Run the tests
 ```
