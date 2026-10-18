@@ -1,6 +1,6 @@
-//// Web router: Wisp handlers. Phase 1 serves the auth-proving endpoint and
-//// the paginated Jira search proxy, which writes every fetch into the
-//// SQLite cache.
+//// Web router: Wisp handlers. Serves the auth-proving endpoint, the
+//// paginated Jira search proxy (which writes every fetch into the SQLite
+//// cache), the issue-detail passthrough, and the built frontend bundle.
 
 import gleam/http
 import gleam/http/request.{path_segments}
@@ -12,15 +12,19 @@ import gleam/string
 import jira_view/config
 import jira_view/db
 import jira_view/jira
-import jira_view/types
+import shared/types
 import wisp
 
 pub fn handle_request(request: wisp.Request) -> wisp.Response {
+  use <- wisp.serve_static(request, under: "/assets", from: "assets")
   use <- wisp.log_request(request)
   case path_segments(request) {
+    [] -> wisp.redirect("/assets/index.html")
     ["api", "me"] -> wisp.require_method(request, http.Get, me)
     ["jira", "search"] ->
       wisp.require_method(request, http.Get, fn() { search(request) })
+    ["jira", "issue", key] ->
+      wisp.require_method(request, http.Get, fn() { issue(key) })
     _ -> wisp.not_found()
   }
 }
@@ -70,6 +74,26 @@ fn cache_issues(issues: List(types.Issue)) -> Result(Nil, db.DbError) {
   use conn <- result.try(db.open())
   use _ <- result.try(db.migrate(conn))
   db.upsert_issues(conn, issues)
+}
+
+/// Issue detail data for the UI panel: fetch
+/// GET /rest/api/3/issue/:key?fields=... and pass the raw JSON through —
+/// the browser decodes it with the shared issue_detail decoder.
+/// shortcut: detail is fetched fresh on every open, not cached; add a
+/// description column to the cache when cached-only detail reads matter.
+fn issue(key: String) -> wisp.Response {
+  case config.load() {
+    Error(message) -> json_error("configuration_incomplete", message, 503)
+    Ok(cfg) ->
+      case
+        jira.get_with_query(cfg, jira.issue_path(key), [
+          #("fields", jira.issue_fields),
+        ])
+      {
+        Ok(body) -> wisp.json_response(body, 200)
+        Error(error) -> jira_error_response(error)
+      }
+  }
 }
 
 /// Uniform JiraError → HTTP status mapping, shared by all Jira endpoints.

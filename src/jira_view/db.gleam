@@ -9,7 +9,7 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
-import jira_view/types.{type Issue, Issue, Status, User}
+import shared/types.{type Issue, Issue, Status, User}
 import sqlight
 
 pub type DbError {

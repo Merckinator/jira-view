@@ -12,7 +12,7 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
 import jira_view/config.{type Config}
-import jira_view/types
+import shared/types
 
 pub type JiraError {
   /// The request could not be completed (network/TLS/timeout).
@@ -32,6 +32,14 @@ pub const search_path = "/rest/api/3/search/jql"
 /// The `fields` allowlist sent with search requests; anything not on it is
 /// not fetched. Add a field here + to types.Issue/decoders together.
 pub const search_fields = "summary,status,assignee,updated"
+
+/// Path of the issue detail endpoint for the detail view.
+pub fn issue_path(key: String) -> String {
+  "/rest/api/3/issue/" <> key
+}
+
+/// The fields the detail panel renders (description arrives as ADF).
+pub const issue_fields = "summary,description,status,assignee,updated"
 
 /// Fetch and decode GET /rest/api/3/myself.
 pub fn myself(cfg: Config) -> Result(types.Me, JiraError) {

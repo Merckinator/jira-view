@@ -1,12 +1,13 @@
 //// Shared Jira types, JSON decoders and encoders.
 ////
-//// This is the "shared code" of the two-target split: on the Erlang target
-//// it powers the backend cache/proxy, on the JS target it will power the
-//// Lustre frontend. Keep it pure: only gleam_stdlib and gleam_json imports.
+//// The "shared code" of the two-target split: on the Erlang target it powers
+//// the backend cache/proxy, on the JS target the Lustre frontend. Keep it
+//// pure: only gleam_stdlib and gleam_json imports, no target-specific code.
 
 import gleam/dynamic/decode
 import gleam/json.{type Json}
-import gleam/option.{type Option, None}
+import gleam/option.{type Option, None, Some}
+import shared/adf.{type AdfNode}
 
 /// The current user, from GET /rest/api/3/myself.
 pub type Me {
@@ -50,6 +51,13 @@ pub type Issue {
 /// the last page (where the payload carries `"isLast": true`).
 pub type SearchPage {
   SearchPage(issues: List(Issue), next_page_token: Option(String))
+}
+
+/// Full issue for the detail view: the pruned issue plus the description
+/// decoded out of its ADF document (empty list = no description).
+/// Shape: GET /rest/api/3/issue/{key} — same `fields` nesting as search.
+pub type IssueDetail {
+  IssueDetail(issue: Issue, description: List(AdfNode))
 }
 
 // ————— decoders —————
@@ -115,6 +123,70 @@ pub fn search_page_decoder() -> decode.Decoder(SearchPage) {
     decode.optional(decode.string),
   )
   decode.success(SearchPage(issues:, next_page_token:))
+}
+
+pub fn issues_response_decoder() -> decode.Decoder(List(Issue)) {
+  use issues <- decode.field("issues", decode.list(app_issue_decoder()))
+  decode.success(issues)
+}
+
+// The backend's /jira/search re-encodes decoded issues with issue_to_json:
+// snake_case, no "fields" wrapper, status{name, category}. The frontend
+// (and future cache readers) decode that shape with the decoders below.
+
+fn app_status_decoder() -> decode.Decoder(Status) {
+  use name <- decode.field("name", decode.string)
+  use category <- decode.optional_field("category", "", decode.string)
+  decode.success(Status(name:, category:))
+}
+
+fn app_user_decoder() -> decode.Decoder(User) {
+  use account_id <- decode.optional_field("account_id", "", decode.string)
+  use display_name <- decode.field("display_name", decode.string)
+  use avatar_url <- decode.optional_field("avatar_url", "", decode.string)
+  decode.success(User(account_id:, display_name:, avatar_url:))
+}
+
+fn app_issue_decoder() -> decode.Decoder(Issue) {
+  use key <- decode.field("key", decode.string)
+  use id <- decode.field("id", decode.string)
+  use summary <- decode.field("summary", decode.string)
+  use status <- decode.field("status", app_status_decoder())
+  use assignee <- decode.optional_field(
+    "assignee",
+    None,
+    decode.optional(app_user_decoder()),
+  )
+  use updated <- decode.field("updated", decode.string)
+  decode.success(Issue(key:, id:, summary:, status:, assignee:, updated:))
+}
+
+/// Decoder for GET /rest/api/3/issue/{key} with
+/// fields=summary,description,status,assignee,updated.
+pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
+  use key <- decode.field("key", decode.string)
+  use id <- decode.field("id", decode.string)
+  use summary <- decode.subfield(["fields", "summary"], decode.string)
+  use status <- decode.subfield(["fields", "status"], status_decoder())
+  use assignee <- decode.then(decode.optionally_at(
+    ["fields", "assignee"],
+    None,
+    decode.optional(user_decoder()),
+  ))
+  use updated <- decode.subfield(["fields", "updated"], decode.string)
+  use doc <- decode.then(decode.optionally_at(
+    ["fields", "description"],
+    None,
+    decode.optional(adf.adf_decoder()),
+  ))
+  let description = case doc {
+    Some(doc) -> doc.content
+    None -> []
+  }
+  decode.success(IssueDetail(
+    issue: Issue(key:, id:, summary:, status:, assignee:, updated:),
+    description:,
+  ))
 }
 
 // ————— encoding —————

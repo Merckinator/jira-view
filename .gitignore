@@ -3,4 +3,4 @@ tmp/
 *.db
 
 # Secrets
-.env
+.envassets/app.js

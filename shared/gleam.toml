@@ -1,0 +1,11 @@
+name = "shared"
+version = "1.0.0"
+
+description = "Pure shared code of jira-view: Jira types + decoders, compiles to Erlang and JS"
+
+[dependencies]
+gleam_json = ">= 2.3.0 and < 4.0.0"
+gleam_stdlib = ">= 0.59.0 and < 2.0.0"
+
+[dev_dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"

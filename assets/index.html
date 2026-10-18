@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jira-view</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 14px;
+      }
+      .jv { max-width: 60rem; margin: 0 auto; padding: 1rem; }
+      .jv-toolbar {
+        display: flex; align-items: center; gap: 1rem;
+        justify-content: space-between; margin-bottom: 0.75rem;
+      }
+      .jv-title { font-size: 1.1rem; margin: 0; }
+      .jv-jql { display: flex; gap: 0.5rem; flex: 1; }
+      .jv-jql-input {
+        flex: 1; padding: 0.4rem 0.5rem;
+        border: 1px solid #8884; border-radius: 6px;
+        font-family: ui-monospace, monospace; font-size: 0.8rem;
+      }
+      button { cursor: pointer; }
+      .jv-table { width: 100%; border-collapse: collapse; }
+      .jv-table th, .jv-table td {
+        text-align: left; padding: 0.35rem 0.5rem;
+        border-bottom: 1px solid #8883;
+      }
+      .jv-table th { font-weight: 600; color: #888; }
+      .jv-row { cursor: pointer; }
+      .jv-row:hover { background: #8882; }
+      .jv-note, .jv-error, .jv-detail-meta { color: #888; }
+      .jv-error { color: #c0392b; }
+      .jv-detail {
+        border: 1px solid #8884; border-radius: 8px;
+        padding: 0.75rem 1rem; margin-bottom: 1rem; position: relative;
+      }
+      .jv-detail-head { display: flex; justify-content: space-between; gap: 1rem; }
+      .jv-detail-head h2 { font-size: 1rem; margin: 0.25rem 0 0.5rem; }
+      .jv-close {
+        border: 0; background: none; font-size: 0.9rem; color: #888;
+      }
+      .jv-close:hover { color: currentColor; }
+      .jv-adf ul { padding-left: 1.2rem; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import { main } from "/assets/app.js"
+      main()
+    </script>
+  </body>
+</html>

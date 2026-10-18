@@ -130,12 +130,30 @@ CREATE TABLE views (
       tests pass**, fixtures shaped after a live `/search/jql` capture.
 
 ### Phase 2 — First real view: "My issues"
-- [ ] Lustre app built JS-target, served by Wisp; `lustre_http` against
-      `GET /jira/search?jql=...`
-- [ ] Default JQL: `assignee = currentUser() AND resolution = Unresolved`
-- [ ] Table with custom columns; issue detail page/panel
-- [ ] ADF → `lustre/element` converter for description + comments
-      (tagged-JSON tree → one recursive function per block type)
+- [x] Lustre app built JS-target, served by Wisp — **done 2026-10-18:**
+      `ui/` package (`gleam build --target javascript` + esbuild single
+      bundle to `assets/app.js`, served by `wisp.serve_static`; `./build.sh`
+      does both, `./dev.sh` runs it).
+      **lustre_http dropped:** every published version pins
+      `gleam_stdlib < 1.0` (yet needs `gleam_json 2.3`, itself only
+      buildable on stdlib 1.x) — the resolver can't satisfy it; replaced by
+      a 15-line fetch FFI (`ui/src/jira_view_ui/fetch.gleam`) against the
+      same endpoints. Revisit if lustre_http ships a stdlib-1.x release.
+- [x] Default JQL: `assignee = currentUser() AND resolution =
+      Unresolved` — loads on init; **note:** on this site's current data
+      that matches 0 issues (the demo issues are unassigned). The JQL box +
+      Refresh button double as the explicit-refresh control (closes the
+      deferred Phase 1 item).
+- [x] Table with custom columns; issue detail page/panel — **table ships
+      fixed columns** (key/summary/status/assignee/updated); per-view
+      column config waits for the Phase 5 saved-views work. Detail panel
+      on row click, verified in-browser.
+- [x] ADF → `lustre/element` converter for description + comments
+      (tagged-JSON tree → one recursive function per block type) — **decoder
+      in shared (`adf.gleam`), renderer in the UI package; block set taken
+      from real captures** (doc/paragraph/text/bulletList/listItem + inline
+      marks, unknown nodes degrade to text). Detail itself is a fresh
+      `/jira/issue/:key` passthrough, not cached yet.
 
 ### Phase 3 — Private ordering (the headline feature)
 - [ ] SortableJS through Lustre's JS interop
