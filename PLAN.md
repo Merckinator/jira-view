@@ -111,12 +111,23 @@ CREATE TABLE views (
       this. — **met 2026-10-18:** `GET /api/me` → 200 with real identity.
 
 ### Phase 1 — Data layer
-- [ ] Shared types: `Issue`, `User`, `Status`, etc. — decoders keep a tight
-      `fields` allowlist (summary, status, assignee, updated, …)
-- [ ] `GET /rest/api/3/search/jql` with `nextPageToken` pagination
-      (modern endpoint; legacy `/search` is deprecated)
-- [ ] `sqlight` schema above; cache-on-fetch, explicit refresh button
-- [ ] gleeunit tests for decoders against captured real payloads
+- [x] Shared types: `Issue`, `User`, `Status`, etc. — decoders keep a tight
+      `fields` allowlist (summary, status, assignee, updated, …) — **done
+      2026-10-18:** `src/jira_view/types.gleam` (pure module, only stdlib +
+      json; `Me` moved there too). Lifting it into a separate pure package
+      stays pending until the Phase 2 JS build actually runs.
+- [x] `GET /rest/api/3/search/jql` with `nextPageToken` pagination
+      (modern endpoint; legacy `/search` is deprecated) — **done 2026-10-18:**
+      `jira.search` follows all pages server-side; verified live (200, 13
+      issues, statuses + categories decoded). Multi-page loop hits real data
+      only above 50 issues — unit-covered via both page-shape fixtures.
+- [x] `sqlight` schema above; cache-on-fetch, explicit refresh button —
+      **2026-10-18:** schema (all 3 tables) + cache-on-fetch verified live
+      (`INSERT OR REPLACE`, `fetched_at` stamped, `fields_json` blob);
+      refresh button/read-through arrive with the Phase 2 UI (no read path
+      exists yet to refresh).
+- [x] gleeunit tests for decoders against captured real payloads — **16
+      tests pass**, fixtures shaped after a live `/search/jql` capture.
 
 ### Phase 2 — First real view: "My issues"
 - [ ] Lustre app built JS-target, served by Wisp; `lustre_http` against
@@ -162,7 +173,11 @@ CREATE TABLE views (
 - **ADF everywhere:** descriptions/comments are Atlassian Document Format JSON,
   not HTML — render via ADF converter; budget real time here.
 - **Search:** use `/rest/api/3/search/jql` + `nextPageToken`; prune `fields`;
-  the legacy `/search` endpoint is being retired.
+  the legacy `/search` endpoint is being retired. **Confirmed live
+  2026-10-18:** the token is *absent* on the last page (`isLast: true`), and
+  the endpoint **rejects unbounded JQL** with 400 "Unbounded JQL queries are
+  not allowed here" — every view's JQL must be bounded (e.g. `assignee =
+  currentUser()`, `created >= -90d`).
 - **Rank:** Jira's issue *Rank* (LexoRank) is shared via the board — so
   personal manual ordering is stored **locally** (keyed by issue key + view).
   That's the gap this app exists to fill; don't try to write Jira's rank.

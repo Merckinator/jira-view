@@ -1,14 +1,16 @@
 //// jira-view: a private local front-end for Jira Cloud.
 ////
-//// Phase 0: start a Wisp/Mist server on 127.0.0.1 and prove Jira
-//// credentials via the /api/me endpoint. Configuration is read per
-//// request so the server always boots; see `.env.example`.
+//// Starts a Wisp/Mist server on 127.0.0.1. Phase 0 proved Jira
+//// credentials via /api/me; Phase 1 adds the paginated Jira search proxy
+//// (/jira/search) that keeps a SQLite cache on disk. Configuration is
+//// read per request so the server always boots; see `.env.example`.
 
 import envoy
 import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/result
+import jira_view/db
 import jira_view/web
 import mist
 import wisp
@@ -18,6 +20,9 @@ const default_port = 8787
 
 pub fn main() {
   wisp.configure_logger()
+
+  // Fail fast at boot if the cache is unusable.
+  db.ensure_schema()
 
   let port = port()
   let secret_key_base = wisp.random_string(64)
