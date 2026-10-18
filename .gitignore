@@ -1,0 +1,6 @@
+build/
+tmp/
+*.db
+
+# Secrets
+.env
