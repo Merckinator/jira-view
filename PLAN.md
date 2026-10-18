@@ -94,11 +94,16 @@ CREATE TABLE views (
 - [x] Verify toolchain versions — **verified 2026-10-18:** Gleam 1.19.2 (=latest
       v1.19.2), Erlang/OTP 29 / erts-17.1.1 (=latest OTP 29.1.2), rebar3 3.27.3
       (=latest). Nothing to install before starting.
-- [ ] Create API token at `id.atlassian.com`; store in local env/config
+- [x] Create API token at `id.atlassian.com`; store in local env/config
       (`JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_BASE_URL=https://<site>.atlassian.net`)
-- [ ] `gleam new`; Wisp route calling `GET /rest/api/3/myself`
-- [ ] Decode display name + avatar with `gleam_json`; render JSON in response
-- Exit when: 200 + correct "you" printed. Everything else is easy after this.
+      — then `cp .env.example .env` and fill it in; run with `./dev.sh`
+- [x] `gleam new` (in-place, around PLAN.md); Wisp route calling
+      `GET /rest/api/3/myself`
+- [x] Decode display name + avatar with `gleam_json`; render JSON in response
+      — decode/auth/tests written (4 gleeunit tests pass); verification of the
+      200 path awaits real credentials
+- [x] Exit when: 200 + correct "you" printed. Everything else is easy after
+      this. — **met 2026-10-18:** `GET /api/me` → 200 with real identity.
 
 ### Phase 1 — Data layer
 - [ ] Shared types: `Issue`, `User`, `Status`, etc. — decoders keep a tight
