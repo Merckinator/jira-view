@@ -1,6 +1,10 @@
 build/
 tmp/
 *.db
+node_modules/
 
 # Secrets
-.envassets/app.js
+.env
+
+# Built frontend bundle (served as-is by the backend; committed for deploys)
+assets/app.js

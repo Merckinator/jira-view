@@ -15,3 +15,24 @@ export async function fetch_text(url, callback) {
     callback(Result$Error(`network: ${error}`));
   }
 }
+
+export async function patch_json(url, body, callback) {
+  try {
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body,
+    });
+    const text = await response.text();
+    if (response.ok) {
+      callback(Result$Ok(text));
+    } else {
+      callback(Result$Error(`${response.status}: ${text.slice(0, 300)}`));
+    }
+  } catch (error) {
+    callback(Result$Error(`network: ${error}`));
+  }
+}

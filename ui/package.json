@@ -1,0 +1,8 @@
+{
+  "name": "jira_view_ui",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "sortablejs": "^1.15.6"
+  }
+}

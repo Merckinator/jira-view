@@ -3,11 +3,13 @@
 //// for the JS target.
 
 import envoy
+import gleam/dict
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
+import gleam/set
 import gleam/string
 import shared/types.{type Issue, Issue, Status, User}
 import sqlight
@@ -147,4 +149,85 @@ fn issue_row_decoder() -> decode.Decoder(Issue) {
     assignee: assignee,
     updated: updated,
   ))
+}
+
+// ————— private per-view ordering (Phase 3) —————
+
+/// Replace the saved ordering of a view with `keys`, in that order
+/// (position = list index). The whole ordering is rewritten on every drop
+/// rather than patched incrementally — simpler, and correct by construction
+/// (rows not in the list simply disappear; the next save rewrites them).
+pub fn save_view_order(
+  conn: sqlight.Connection,
+  view_id: String,
+  keys: List(String),
+) -> Result(Nil, DbError) {
+  use _ <- result.try(
+    sqlight.query(
+      "DELETE FROM view_issues WHERE view_id = ?",
+      on: conn,
+      with: [sqlight.text(view_id)],
+      expecting: decode.dynamic,
+    )
+    |> result.map(fn(_) { Nil })
+    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
+  )
+  keys
+  |> list.index_map(fn(key, position) { #(key, position) })
+  |> list.try_each(fn(row) {
+    let #(key, position) = row
+    sqlight.query(
+      "INSERT INTO view_issues (view_id, issue_key, position) VALUES (?, ?, ?)",
+      on: conn,
+      with: [sqlight.text(view_id), sqlight.text(key), sqlight.int(position)],
+      expecting: decode.dynamic,
+    )
+    |> result.map(fn(_) { Nil })
+    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+  })
+}
+
+/// The saved ordering of a view: issue keys by ascending position.
+pub fn load_view_order(
+  conn: sqlight.Connection,
+  view_id: String,
+) -> Result(List(String), DbError) {
+  sqlight.query(
+    "SELECT issue_key FROM view_issues WHERE view_id = ? ORDER BY position",
+    on: conn,
+    with: [sqlight.text(view_id)],
+    expecting: single_column_decoder(),
+  )
+  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+}
+
+/// Rows decode one value each; sqlight wraps them into a list.
+fn single_column_decoder() -> decode.Decoder(String) {
+  decode.field(0, decode.string, decode.success)
+}
+
+/// Merge Jira's fetched order (from the last search) with a view's private
+/// ordering: previously-ordered issues keep their saved order (with fresh
+/// field values), issues the save never saw are appended at the end in Jira
+/// order, and saved keys that are no longer in the fetched set are dropped.
+/// Pure — unit-tested against exactly the semantics the UI relies on.
+pub fn merge_view_order(
+  saved: List(String),
+  issues: List(Issue),
+) -> List(Issue) {
+  let by_key =
+    list.fold(issues, dict.new(), fn(acc, issue) {
+      dict.insert(acc, issue.key, issue)
+    })
+  let ordered =
+    list.filter_map(saved, fn(key) {
+      case dict.get(by_key, key) {
+        Ok(issue) -> Ok(issue)
+        Error(_) -> Error(Nil)
+      }
+    })
+  let saved_keys = set.from_list(saved)
+  let rest =
+    list.filter(issues, fn(issue) { !set.contains(saved_keys, issue.key) })
+  list.append(ordered, rest)
 }

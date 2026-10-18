@@ -32,6 +32,22 @@
       .jv-table th { font-weight: 600; color: #888; }
       .jv-row { cursor: pointer; }
       .jv-row:hover { background: #8882; }
+      .jv-row-focused {
+        outline: 1px solid #8886; outline-offset: -1px;
+        background: #8881;
+      }
+      /* drag handle column (⋮⋮) */
+      .jv-table .jv-col-grab { width: 1.5rem; }
+      .jv-grab {
+        cursor: grab;
+        color: #8885; user-select: none;
+        font-size: 0.75rem; letter-spacing: -0.18em;
+      }
+      .jv-grab:active { cursor: grabbing; }
+      .jv-tbody tr.sortable-ghost { opacity: 0.35; }
+      .jv-tbody tr.sortable-chosen { background: #8882; }
+      /* failed order saves */
+      .jv-order-error { color: #c0392b; font-size: 0.8rem; margin: 0.25rem 0; }
       .jv-note, .jv-error, .jv-detail-meta { color: #888; }
       .jv-error { color: #c0392b; }
       .jv-detail {

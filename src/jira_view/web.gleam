@@ -1,7 +1,10 @@
 //// Web router: Wisp handlers. Serves the auth-proving endpoint, the
 //// paginated Jira search proxy (which writes every fetch into the SQLite
-//// cache), the issue-detail passthrough, and the built frontend bundle.
+//// cache and returns the view's merged ordering), the issue-detail
+//// passthrough, the private per-view ordering endpoint, and the built
+//// frontend bundle.
 
+import gleam/dynamic/decode
 import gleam/http
 import gleam/http/request.{path_segments}
 import gleam/int
@@ -25,6 +28,8 @@ pub fn handle_request(request: wisp.Request) -> wisp.Response {
       wisp.require_method(request, http.Get, fn() { search(request) })
     ["jira", "issue", key] ->
       wisp.require_method(request, http.Get, fn() { issue(key) })
+    ["jira", "views", view_id, "order"] ->
+      wisp.require_method(request, http.Patch, fn() { save_order(request, view_id) })
     _ -> wisp.not_found()
   }
 }
@@ -42,21 +47,29 @@ fn me() -> wisp.Response {
 }
 
 /// Search proxy: GET /jira/search?jql=... follows every search page from
-/// Jira, writes the issues into the cache, and returns the full list.
+/// Jira, writes the issues into the cache, and returns the list in the
+/// view's merged order — rows the view has privately ordered keep that
+/// order, anything new is appended (see db.merge_view_order). The `view`
+/// query parameter names the view; until Phase 5's saved views there is
+/// exactly one: "my-issues".
 fn search(request: wisp.Request) -> wisp.Response {
   case list.key_find(wisp.get_query(request), "jql") {
     Error(_) ->
       json_error("missing_parameter", "required query parameter: jql", 400)
-    Ok(jql) ->
+    Ok(jql) -> {
+      let view_id = case list.key_find(wisp.get_query(request), "view") {
+        Ok(view_id) -> view_id
+        Error(_) -> default_view_id
+      }
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
           case jira.search(cfg, jql) {
             Ok(issues) ->
-              case cache_issues(issues) {
-                Ok(_) ->
+              case cache_and_merge(issues, view_id) {
+                Ok(ordered) ->
                   json.object([
-                    #("issues", json.array(issues, types.issue_to_json)),
+                    #("issues", json.array(ordered, types.issue_to_json)),
                   ])
                   |> json.to_string
                   |> wisp.json_response(200)
@@ -66,14 +79,74 @@ fn search(request: wisp.Request) -> wisp.Response {
             Error(error) -> jira_error_response(error)
           }
       }
+    }
   }
 }
 
-/// Fetches own the connection: open, migrate, upsert, done.
-fn cache_issues(issues: List(types.Issue)) -> Result(Nil, db.DbError) {
+const default_view_id = "my-issues"
+
+/// Fetches own the connection: open, migrate, upsert the fresh issues, then
+/// read the view's private ordering and merge it over the fetched order.
+fn cache_and_merge(
+  issues: List(types.Issue),
+  view_id: String,
+) -> Result(List(types.Issue), db.DbError) {
   use conn <- result.try(db.open())
   use _ <- result.try(db.migrate(conn))
-  db.upsert_issues(conn, issues)
+  use _ <- result.try(db.upsert_issues(conn, issues))
+  use saved <- result.try(db.load_view_order(conn, view_id))
+  Ok(db.merge_view_order(saved, issues))
+}
+
+/// PATCH /jira/views/:view/order — persist the private ordering the browser
+/// sent as {"keys": ["A-1", "A-2", ...]} (the full row order, so appended
+/// issues join the ordering at the same moment they are first dropped).
+fn save_order(request: wisp.Request, view_id: String) -> wisp.Response {
+  use <- wisp.require_content_type(request, "application/json")
+  use body <- wisp.require_string_body(request)
+  case parse_order_body(body) {
+    Ok([]) ->
+      json_error(
+        "empty_order",
+        "keys must contain at least one issue key; "
+          <> "a view with no rows needs no saved order",
+        400,
+      )
+    Ok(keys) ->
+      case store_order(view_id, keys) {
+        Ok(count) ->
+          json.object([
+            #("saved", json.bool(True)),
+            #("view_id", json.string(view_id)),
+            #("count", json.int(count)),
+          ])
+          |> json.to_string
+          |> wisp.json_response(200)
+        Error(error) ->
+          json_error("order_write_failed", string.inspect(error), 500)
+      }
+    Error(message) -> json_error("bad_request", message, 400)
+  }
+}
+
+/// The ordering request shape, decoded and validated. Exposed for tests.
+pub fn parse_order_body(body: String) -> Result(List(String), String) {
+  case json.parse(body, order_body_decoder()) {
+    Ok(keys) -> Ok(keys)
+    Error(_) -> Error("expected {\"keys\": [\"KEY\", ...] } JSON")
+  }
+}
+
+fn order_body_decoder() -> decode.Decoder(List(String)) {
+  use keys <- decode.field("keys", decode.list(decode.string))
+  decode.success(keys)
+}
+
+fn store_order(view_id: String, keys: List(String)) -> Result(Int, db.DbError) {
+  use conn <- result.try(db.open())
+  use _ <- result.try(db.migrate(conn))
+  use _ <- result.try(db.save_view_order(conn, view_id, keys))
+  Ok(list.length(keys))
 }
 
 /// Issue detail data for the UI panel: fetch

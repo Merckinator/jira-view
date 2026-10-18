@@ -156,11 +156,34 @@ CREATE TABLE views (
       `/jira/issue/:key` passthrough, not cached yet.
 
 ### Phase 3 — Private ordering (the headline feature)
-- [ ] SortableJS through Lustre's JS interop
-- [ ] On drop: write `view_issues` order → `PATCH /jira/views/:id/order`
-- [ ] Render merged view: server-ordered list overrides Jira's sort
-      (local order wins; new issues appended at the end)
-- [ ] Keyboard navigation (j/k/w, enter) alongside drag
+- [x] SortableJS through Lustre's JS interop — **done 2026-10-18:** rows are
+      rendered as `lustre/element/keyed` `<tr>`s (keyed by issue key —
+      load-bearing: SortableJS moves physical tbody nodes behind Lustre's
+      back, and unkeyed positional patching was verified to *visually
+      scramble* the table on the next render; keys make Lustre re-MOVE the
+      tracked nodes into model order instead). Attach lives in
+      `ui/src/jira_view_ui/sortable{,_ffi}.mjs` via `effect.before_paint`
+      (runs after the DOM patch, exactly when the fresh tbody exists;
+      re-attaching is idempotent via `Sortable.get`). Dependency added as
+      `ui/package.json` → `sortablejs`.
+- [x] On drop: write `view_issues` order → `PATCH /jira/views/:id/order` —
+      **done:** the drop sends the FULL visible key list (appended rows join
+      the ordering the moment they are moved); `{"keys": [...]}` body,
+      full-replace semantics in `db.save_view_order`; save failures surface
+      as a toolbar note (`OrderSaved`), the visual order stands.
+- [x] Render merged view: server-ordered list overrides Jira's sort
+      (local order wins; new issues appended at the end) — **done:**
+      `db.merge_view_order` (pure, unit-tested) applied inside
+      `GET /jira/search` before responding; the `view` query param names the
+      view and defaults to `my-issues` (the single hardcoded view until
+      Phase 5). Verified live: saved order + per-view isolation + persistence
+      across reloads/restarts via a separate test db.
+- [x] Keyboard navigation alongside drag — **done (scheme confirmed with the
+      plan owner):** j/k move the focus cursor (clamped), Shift+j/K relocate
+      the focused row (same PATCH save as drag; cursor rides along), Enter
+      opens the detail for the focused row. Document-level listener in
+      `keyboard{,_ffi}.mjs`, attach-once, ignores input/textarea targets so
+      the JQL box is never hijacked. The plan's `w` is deliberately unbound.
 
 ### Phase 4 — Writes
 - [ ] `GET issue/transitions` first — metadata call; required fields vary

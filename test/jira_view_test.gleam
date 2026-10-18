@@ -1,5 +1,6 @@
 import envoy
 import gleam/http
+import gleam/json
 import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
@@ -195,4 +196,153 @@ pub fn db_upsert_replaces_existing_keys_test() {
       updated: "2026-10-18T18:05:33.688-0400",
     ),
   ])
+}
+
+// private ordering: merge semantics (the contract the /jira/search view gives)
+
+pub fn merge_view_order_empty_test() {
+  // No saved order yet: Jira's order passes through untouched.
+  db.merge_view_order([], [cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")])
+  |> should.equal([cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")])
+}
+
+pub fn merge_view_order_saved_order_wins_test() {
+  db.merge_view_order(
+    ["KAN-2", "KAN-1"],
+    [cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")],
+  )
+  |> should.equal([cached_issue("KAN-2", "Two", ""), cached_issue("KAN-1", "One", "")])
+}
+
+pub fn merge_view_order_appends_new_issues_test() {
+  // KAN-3 was never part of the saved order -> appended at the end,
+  // in Jira's order, after every ordered row.
+  db.merge_view_order(
+    ["KAN-2", "KAN-1"],
+    [
+      cached_issue("KAN-3", "New", ""),
+      cached_issue("KAN-1", "One", ""),
+      cached_issue("KAN-2", "Two", ""),
+    ],
+  )
+  |> should.equal([
+    cached_issue("KAN-2", "Two", ""),
+    cached_issue("KAN-1", "One", ""),
+    cached_issue("KAN-3", "New", ""),
+  ])
+}
+
+pub fn merge_view_order_drops_stale_keys_test() {
+  // A saved key that no longer matches the JQL result (resolved, moved
+  // projects, …) is simply not rendered; ordering rows stay until the next
+  // save rewrites them.
+  db.merge_view_order(
+    ["KAN-9", "KAN-1"],
+    [cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")],
+  )
+  |> should.equal([
+    cached_issue("KAN-1", "One", ""),
+    cached_issue("KAN-2", "Two", ""),
+  ])
+}
+
+pub fn merge_view_order_keeps_fresh_values_test() {
+  // Ordered rows come from the fresh fetch, so edits made after the drop
+  // (new summary/status) still show through the saved order.
+  db.merge_view_order(
+    ["KAN-1", "KAN-2"],
+    [cached_issue("KAN-1", "One (edited)", ""), cached_issue("KAN-2", "Two", "")],
+  )
+  |> should.equal([
+    cached_issue("KAN-1", "One (edited)", ""),
+    cached_issue("KAN-2", "Two", ""),
+  ])
+}
+
+// private ordering: save/load round trip on an in-memory db
+
+pub fn db_view_order_round_trip_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let assert Ok(conn) = db.open()
+  let assert Ok(_) = db.migrate(conn)
+
+  db.load_view_order(conn, "my-issues")
+  |> should.be_ok
+  |> should.equal([])
+
+  db.save_view_order(conn, "my-issues", ["KAN-2", "KAN-3", "KAN-1"])
+  |> should.be_ok
+
+  db.load_view_order(conn, "my-issues")
+  |> should.be_ok
+  |> should.equal(["KAN-2", "KAN-3", "KAN-1"])
+
+  // saving again replaces the whole ordering (per-view isolation included)
+  db.save_view_order(conn, "my-issues", ["KAN-1"])
+  |> should.be_ok
+
+  db.save_view_order(conn, "sprint-42", ["KAN-3"])
+  |> should.be_ok
+
+  db.load_view_order(conn, "my-issues")
+  |> should.be_ok
+  |> should.equal(["KAN-1"])
+
+  db.load_view_order(conn, "sprint-42")
+  |> should.be_ok
+  |> should.equal(["KAN-3"])
+}
+
+// web: PATCH /jira/views/:view/order
+
+pub fn order_patch_rejects_bad_body_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let request =
+    simulate.request(http.Patch, "/jira/views/my-issues/order")
+    |> simulate.json_body(
+      json.object([#("order", json.array([], json.string))]),
+    )
+  let resp = web.handle_request(request)
+  resp.status |> should.equal(400)
+}
+
+pub fn order_patch_rejects_empty_order_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let request =
+    simulate.request(http.Patch, "/jira/views/my-issues/order")
+    |> simulate.json_body(json.object([#("keys", json.array([], json.string))]))
+  let resp = web.handle_request(request)
+  resp.status |> should.equal(400)
+}
+
+/// The happy path can't use `:memory:` — the handler opens its own
+/// connection while the assertion opens another. A repo-root file does the
+/// job (`*.db` is gitignored; saving is full-replace, so runs are idempotent).
+pub fn order_patch_stores_order_test() {
+  envoy.set("JIRA_VIEW_DB", "order-route-test.db")
+  let request =
+    simulate.request(http.Patch, "/jira/views/my-issues/order")
+    |> simulate.json_body(
+      json.object([#("keys", json.array(["KAN-2", "KAN-1"], json.string))]),
+    )
+  let resp = web.handle_request(request)
+  resp.status |> should.equal(200)
+
+  let assert Ok(conn) = db.open()
+  db.load_view_order(conn, "my-issues")
+  |> should.be_ok
+  |> should.equal(["KAN-2", "KAN-1"])
+}
+
+pub fn parse_order_body_test() {
+  web.parse_order_body("{\"keys\": [\"KAN-2\", \"KAN-1\"]}")
+  |> should.be_ok
+  |> should.equal(["KAN-2", "KAN-1"])
+
+  web.parse_order_body("{\"keys\": []}")
+  |> should.be_ok
+  |> should.equal([])
+
+  web.parse_order_body("{\"order\": []}")
+  |> should.be_error
 }
