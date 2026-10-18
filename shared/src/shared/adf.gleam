@@ -9,6 +9,8 @@
 //// plain text instead of vanishing.
 
 import gleam/dynamic/decode
+import gleam/json.{type Json}
+import gleam/list
 
 pub type AdfMark {
   /// Inline mark ("strong", "em", "code", "link", ...).
@@ -54,4 +56,63 @@ fn mark_decoder() -> decode.Decoder(AdfMark) {
     decode.string,
   ))
   decode.success(AdfMark(kind, href))
+}
+
+// ————— building / encoding —————
+
+/// The minimal document comment/worklog POST bodies need: one paragraph of
+/// plain text. Newlines stay as-is (single paragraph) — good enough for the
+/// short comments this app writes.
+pub fn paragraph_document(text: String) -> AdfNode {
+  AdfNode(
+    kind: "doc",
+    text: "",
+    marks: [],
+    content: [
+      AdfNode(
+        kind: "paragraph",
+        text: "",
+        marks: [],
+        content: [AdfNode(kind: "text", text: text, marks: [], content: [])],
+      ),
+    ],
+  )
+}
+
+/// Encode back to ADF JSON. `doc` nodes carry `"version": 1` (Jira rejects
+/// documents without it); text/marks/content are emitted only when present,
+/// mirroring what Jira itself produces.
+pub fn adf_to_json(node: AdfNode) -> Json {
+  let base = [#("type", json.string(node.kind))]
+  let base = case node.kind {
+    "doc" -> list.append(base, [#("version", json.int(1))])
+    _ -> base
+  }
+  let base = case node.text {
+    "" -> base
+    text -> list.append(base, [#("text", json.string(text))])
+  }
+  let base = case node.marks {
+    [] -> base
+    marks -> list.append(base, [#("marks", json.array(marks, mark_to_json))])
+  }
+  let base = case node.content {
+    [] -> base
+    content ->
+      list.append(base, [#("content", json.array(content, adf_to_json))])
+  }
+  json.object(base)
+}
+
+fn mark_to_json(mark: AdfMark) -> Json {
+  let base = [#("type", json.string(mark.kind))]
+  case mark.href {
+    "" -> json.object(base)
+    href ->
+      json.object(
+        list.append(base, [
+          #("attrs", json.object([#("href", json.string(href))])),
+        ]),
+      )
+  }
 }

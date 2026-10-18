@@ -8,6 +8,7 @@ import jira_view/config
 import jira_view/db
 import jira_view/jira
 import jira_view/web
+import shared/adf
 import shared/types
 import wisp/simulate
 
@@ -345,4 +346,213 @@ pub fn parse_order_body_test() {
 
   web.parse_order_body("{\"order\": []}")
   |> should.be_error
+}
+
+// Phase 4: ADF building + round trip
+
+pub fn adf_paragraph_document_round_trip_test() {
+  let document = adf.paragraph_document("hello \"json\" & <world>")
+  json.parse(json.to_string(adf.adf_to_json(document)), adf.adf_decoder())
+  |> should.equal(Ok(document))
+}
+
+pub fn adf_document_shape_test() {
+  // Jira needs type+version at the doc level and type/text inside.
+  json.to_string(adf.adf_to_json(adf.paragraph_document("hi")))
+  |> should.equal(
+    "{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}]}",
+  )
+}
+
+// Phase 4: comment / worklog decoders against captured real shapes
+
+pub fn jira_comment_decoder_capture_test() {
+  // Shape captured from POST /rest/api/3/issue/SAM1-11/comment (identical
+  // to the entries embedded in fields.comment.comments, minus extras).
+  json.parse(
+    "{\"id\":\"10000\",\"author\":{\"accountId\":\"5a67cc62cc9f657ed59d22da\",\"displayName\":\"Jeffery Merckens\",\"active\":true},\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Captured comment shape\"}]}]},\"created\":\"2026-10-18T19:38:02.298-0400\",\"updated\":\"2026-10-18T19:38:02.298-0400\",\"jsdPublic\":true}",
+    types.jira_comment_decoder(),
+  )
+  |> should.equal(Ok(types.Comment(
+    author: "Jeffery Merckens",
+    created: "2026-10-18T19:38:02.298-0400",
+    body: [
+      adf.AdfNode(
+        "paragraph",
+        "",
+        [adf.AdfNode("text", "Captured comment shape", [], [])],
+        [],
+      ),
+    ],
+  )))
+}
+
+pub fn jira_comment_decoder_absent_body_test() {
+  json.parse("{\"created\":\"2026\"}", types.jira_comment_decoder())
+  |> should.equal(Ok(types.Comment(author: "", created: "2026", body: [])))
+}
+
+pub fn jira_worklog_decoder_capture_test() {
+  // Shape per the POST /rest/api/3/issue/:key/worklog capture: author,
+  // started, timeSpent; comment (ADF) is optional.
+  json.parse(
+    "{\"id\":\"10000\",\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\",\"timeSpentSeconds\":1500}",
+    types.jira_worklog_decoder(),
+  )
+  |> should.equal(Ok(types.WorklogEntry(
+    author: "Jeffery Merckens",
+    started: "2026-10-18T23:38:02.298+0000",
+    time_spent: "25m",
+    body: [],
+  )))
+}
+
+pub fn issue_detail_decoder_with_embeds_test() {
+  // fields.comment / fields.worklog embeds decode through the same
+  // entry decoders (verified against a live capture with one of each).
+  json.parse(
+    "{\"id\":\"10013\",\"key\":\"SAM1-11\",\"fields\":{\"summary\":\"Phase 4 verification\",\"status\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"updated\":\"2026-10-18\",\"description\":null,\"comment\":{\"comments\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"created\":\"2026-10-18T19:38:02.298-0400\",\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"c1\"}]}]}}],\"total\":1},\"worklog\":{\"worklogs\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\"}],\"total\":1}}}",
+    types.issue_detail_decoder(),
+  )
+  |> should.equal(Ok(types.IssueDetail(
+    issue: types.Issue(
+      key: "SAM1-11",
+      id: "10013",
+      summary: "Phase 4 verification",
+      status: types.Status("Done", "done"),
+      assignee: None,
+      updated: "2026-10-18",
+    ),
+    description: [],
+    comments: [
+      types.Comment(
+        author: "Jeffery Merckens",
+        created: "2026-10-18T19:38:02.298-0400",
+        body: [
+          adf.AdfNode("paragraph", "", [adf.AdfNode("text", "c1", [], [])], []),
+        ],
+      ),
+    ],
+    worklog: [
+      types.WorklogEntry(
+        author: "Jeffery Merckens",
+        started: "2026-10-18T23:38:02.298+0000",
+        time_spent: "25m",
+        body: [],
+      ),
+    ],
+  )))
+}
+
+// Phase 4: transitions metadata + the POST body this app builds
+
+pub fn jira_transitions_decoder_capture_test() {
+  // Captured from GET /rest/api/3/issue/SAM1-7/transitions (fields absent
+  // on the simplest team-managed workflows).
+  json.parse(
+    "{\"expand\":\"transitions\",\"transitions\":[{\"id\":\"11\",\"name\":\"To Do\",\"to\":{\"name\":\"To Do\",\"statusCategory\":{\"key\":\"new\"}},\"hasScreen\":false,\"isGlobal\":true,\"isConditional\":false},{\"id\":\"41\",\"name\":\"Done\",\"to\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"isLooped\":false}]}",
+    types.jira_transitions_decoder(),
+  )
+  |> should.equal(Ok([
+    types.Transition("11", "To Do", "To Do", []),
+    types.Transition("41", "Done", "Done", []),
+  ]))
+}
+
+pub fn transition_with_required_resolution_test() {
+  // Company-managed workflows carry a transition screen: {fields: [...]}.
+  json.parse(
+    "{\"transitions\":[{\"id\":\"31\",\"name\":\"Done\",\"to\":{\"name\":\"Done\"},\"fields\":[{\"required\":true,\"name\":\"Resolution\",\"key\":\"resolution\"},{\"required\":false,\"key\":\"comment\"}]}]}",
+    types.jira_transitions_decoder(),
+  )
+  |> should.equal(Ok([
+    types.Transition(
+      "31",
+      "Done",
+      "Done",
+      [types.TransitionField("resolution", True), types.TransitionField("comment", False)],
+    ),
+  ]))
+
+  let assert Ok([transition]) =
+    json.parse(
+      "{\"transitions\":[{\"id\":\"31\",\"name\":\"Done\",\"to\":{\"name\":\"Done\"},\"fields\":[{\"required\":true,\"key\":\"resolution\"}]}]}",
+      types.jira_transitions_decoder(),
+    )
+
+  // resolution is auto-filled into the POST body…
+  web.transition_post_body(transition)
+  |> should.equal(
+    "{\"transition\":{\"id\":\"31\"},\"fields\":{\"resolution\":{\"name\":\"Done\"}}}",
+  )
+
+  // …and never reported as an unexpected requirement; other required
+  // fields are refused up front.
+  web.unexpected_required_fields(transition)
+  |> should.equal([])
+}
+
+pub fn transition_post_body_plain_test() {
+  let transition = types.Transition("21", "In Progress", "In Progress", [])
+  web.transition_post_body(transition)
+  |> should.equal("{\"transition\":{\"id\":\"21\"}}")
+}
+
+// Phase 4: write request bodies + routes
+
+pub fn parse_write_bodies_test() {
+  web.parse_transition_body("{\"id\": \"41\"}")
+  |> should.be_ok
+  |> should.equal("41")
+
+  web.parse_transition_body("{\"transition\": {}}")
+  |> should.be_error
+
+  web.parse_comment_body("{\"text\": \"  hi \\n\"}")
+  |> should.be_ok
+  |> should.equal("hi")
+
+  web.parse_comment_body("{\"text\": \"   \"}")
+  |> should.be_ok
+  |> should.equal("")
+
+  web.parse_worklog_body("{\"time_spent\": \"25m\"}")
+  |> should.be_ok
+  |> should.equal("25m")
+
+  web.parse_worklog_body("{}")
+  |> should.be_error
+}
+
+pub fn transition_post_route_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let request =
+    simulate.request(http.Post, "/jira/issue/KAN-1/transition")
+    |> simulate.json_body(json.object([#("id", json.string("41"))]))
+  let resp = web.handle_request(request)
+  // valid body, but the metadata GET can't reach Jira
+  resp.status |> should.equal(502)
+}
+
+pub fn write_routes_bad_body_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+
+  let bad_transition =
+    simulate.request(http.Post, "/jira/issue/KAN-1/transition")
+    |> simulate.json_body(json.null())
+  web.handle_request(bad_transition).status |> should.equal(400)
+
+  let bad_comment =
+    simulate.request(http.Post, "/jira/issue/KAN-1/comment")
+    |> simulate.json_body(json.object([#("nope", json.string("hi"))]))
+  web.handle_request(bad_comment).status |> should.equal(400)
+
+  let bad_worklog =
+    simulate.request(http.Post, "/jira/issue/KAN-1/worklog")
+    |> simulate.json_body(json.object([#("x", json.string(""))]))
+  web.handle_request(bad_worklog).status |> should.equal(400)
 }

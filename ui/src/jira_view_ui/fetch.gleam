@@ -17,6 +17,13 @@ fn patch_json_ffi(
   callback: fn(Result(String, String)) -> Nil,
 ) -> Nil
 
+@external(javascript, "./fetch_ffi.mjs", "post_json")
+fn post_json_ffi(
+  url: String,
+  body: String,
+  callback: fn(Result(String, String)) -> Nil,
+) -> Nil
+
 /// GET a URL and map the raw response body into a message.
 pub fn get(
   url: String,
@@ -41,5 +48,34 @@ pub fn patch_json(
         Error(message) -> Error(message)
       }))
     })
+  })
+}
+
+/// POST a JSON document; successes carry no usable payload, so callers see
+/// `Ok(Nil)` with only failures keeping the error detail.
+pub fn post_json(
+  url: String,
+  body: String,
+  to_msg: fn(Result(Nil, String)) -> msg,
+) -> Effect(msg) {
+  effect.from(fn(dispatch) {
+    post_json_ffi(url, body, fn(result) {
+      dispatch(to_msg(case result {
+        Ok(_) -> Ok(Nil)
+        Error(message) -> Error(message)
+      }))
+    })
+  })
+}
+
+/// POST a JSON document and map the raw response body into a message (the
+/// write endpoints return the created record pruned).
+pub fn post_json_raw(
+  url: String,
+  body: String,
+  to_msg: fn(Result(String, String)) -> msg,
+) -> Effect(msg) {
+  effect.from(fn(dispatch) {
+    post_json_ffi(url, body, fn(result) { dispatch(to_msg(result)) })
   })
 }

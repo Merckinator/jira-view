@@ -5,6 +5,7 @@
 //// the Lustre frontend.
 
 import gleam/bit_array
+import gleam/http
 import gleam/http/request
 import gleam/httpc
 import gleam/json
@@ -38,8 +39,24 @@ pub fn issue_path(key: String) -> String {
   "/rest/api/3/issue/" <> key
 }
 
-/// The fields the detail panel renders (description arrives as ADF).
-pub const issue_fields = "summary,description,status,assignee,updated"
+/// The fields the detail panel renders (description arrives as ADF; the
+/// comment and worklog embeds drive the panel's lists).
+pub const issue_fields = "summary,description,status,assignee,updated,comment,worklog"
+
+/// Paths of the transitions metadata + POST endpoints of an issue.
+pub fn transitions_path(key: String) -> String {
+  issue_path(key) <> "/transitions"
+}
+
+/// Path of the comment POST endpoint of an issue.
+pub fn comment_path(key: String) -> String {
+  issue_path(key) <> "/comment"
+}
+
+/// Path of the worklog POST endpoint of an issue.
+pub fn worklog_path(key: String) -> String {
+  issue_path(key) <> "/worklog"
+}
 
 /// Fetch and decode GET /rest/api/3/myself.
 pub fn myself(cfg: Config) -> Result(types.Me, JiraError) {
@@ -118,6 +135,27 @@ pub fn get_with_query(
     |> request.prepend_header("accept", "application/json")
     |> request.set_query(query)
 
+  send_and_check(req)
+}
+
+/// POST `body` (JSON) to `path`.
+pub fn post(cfg: Config, path: String, body: String) -> Result(String, JiraError) {
+  use req <- result.try(
+    request.to(cfg.base_url <> path)
+    |> result.map_error(fn(_) { Api(0, "JIRA_BASE_URL could not be parsed") }),
+  )
+  req
+  |> request.set_method(http.Post)
+  |> request.prepend_header("authorization", basic_auth_header(cfg))
+  |> request.prepend_header("accept", "application/json")
+  |> request.prepend_header("content-type", "application/json")
+  |> request.set_body(body)
+  |> send_and_check
+}
+
+/// Send the request and map non-2xx responses into JiraError. 204 (No
+/// Content, the transitions POST response) reads back as "".
+fn send_and_check(req: request.Request(String)) -> Result(String, JiraError) {
   case httpc.send(req) {
     Ok(resp) ->
       case resp.status >= 200 && resp.status < 300 {

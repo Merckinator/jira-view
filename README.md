@@ -3,8 +3,9 @@
 A private, local front-end for Jira Cloud — views, filters, and manually
 re-ordered issues that live on your machine only (see [PLAN.md](PLAN.md)).
 
-Currently Phase 3: "My issues" as a Lustre table with **private drag-and-drop
-ordering**, served by a Wisp proxy that caches every fetch in SQLite.
+Currently Phase 4: "My issues" as a Lustre table with **private drag-and-drop
+ordering**, served by a Wisp proxy that caches every fetch in SQLite — plus
+**writes without leaving the app**: transitions, comments and work log.
 
 ## Run
 
@@ -20,6 +21,9 @@ ordering**, served by a Wisp proxy that caches every fetch in SQLite.
   next fetch (new issues append at the end).
 - Keyboard: `j`/`k` move the focus cursor, `Shift+j`/`Shift+k` relocate the
   focused row, `Enter` opens its detail panel.
+- In the detail panel: transition buttons (required `resolution` fields are
+  auto-filled, others are refused with Jira's field list), a comment box,
+  and a work-log form — all optimistic, undone by a refetch on failure.
 
 ## Development
 

@@ -186,10 +186,33 @@ CREATE TABLE views (
       the JQL box is never hijacked. The plan's `w` is deliberately unbound.
 
 ### Phase 4 — Writes
-- [ ] `GET issue/transitions` first — metadata call; required fields vary
-      per workflow (e.g. resolution on Done)
-- [ ] `POST /transitions`, `POST comment`, log work (`worklog`)
-- [ ] Optimistic UI on local state; refetch on error only
+- [x] `GET issue/transitions` first — metadata call; required fields vary
+      per workflow (e.g. resolution on Done) — **done 2026-10-18:** proxied
+      as `GET /jira/issue/:key/transitions` and fetched when the panel
+      opens (buttons render from it). Captured live shapes feed the
+      fixtures; this site's team-managed SAM1 workflow carries no
+      `fields`, so the screen-field handling is fixture-tested only.
+- [x] `POST /transitions`, `POST comment`, log work (`worklog`) — **done:**
+      browser writes go `POST /jira/issue/:key/{transition,comment,worklog}`.
+      The transition POST reads the metadata fresh and auto-fills
+      `resolution` when the workflow requires it (company-managed "Done"),
+      refusing transitions that need other screen input with a 400 naming
+      the fields. Comments are wrapped in an ADF document
+      (`adf.paragraph_document`/`adf_to_json`, round-trip tested); every
+      POST response is re-encoded into the app's pruned shape
+      (author/created/body ADF; worklog author/started/time_spent) so the
+      frontend decodes one shape. Worklog `started` is left to Jira
+      (defaults to now).
+- [x] Optimistic UI on local state; refetch on error only — **done:**
+      click → row + panel status flip immediately; a failed POST is undone
+      by refetching the detail (`GotDetail` now also syncs the matching
+      row), which is exactly the plan's optimistic rule. Comments/worklogs
+      append as "sending…" rows until the server's created record replaces
+      them; failures drop the entry and surface the error in the panel.
+      **Verified live in-browser:** transition Done→In Progress flipped
+      panel + row and survived a reload; one comment + one 30m worklog
+      posted through the app and still present after refetch. (All this
+      ran on a throwaway issue `SAM1-11`, deleted afterwards.)
 
 ### Phase 5 — More views
 - [ ] Saved views CRUD (`views` table): jql + columns + ordering each

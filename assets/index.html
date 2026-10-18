@@ -61,6 +61,36 @@
       }
       .jv-close:hover { color: currentColor; }
       .jv-adf ul { padding-left: 1.2rem; }
+      /* write panel (Phase 4) */
+      .jv-transitions {
+        display: flex; gap: 0.4rem; flex-wrap: wrap;
+        margin: 0.4rem 0 0.6rem;
+      }
+      .jv-transition {
+        padding: 0.18rem 0.55rem; font-size: 0.8rem;
+        border: 1px solid #8884; border-radius: 6px; background: none;
+      }
+      .jv-transition:hover { background: #8882; }
+      .jv-section-title {
+        font-size: 0.8rem; margin: 0.9rem 0 0.3rem; color: #888;
+        font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+      }
+      .jv-comment, .jv-worklog { padding: 0.45rem 0; border-bottom: 1px dashed #8882; }
+      .jv-comment:last-of-type, .jv-worklog:last-of-type { border-bottom: 0; }
+      .jv-comment-meta { font-size: 0.75rem; color: #888; margin-bottom: 0.2rem; }
+      .jv-pending { opacity: 0.55; font-style: italic; }
+      .jv-actions { margin-top: 0.4rem; display: flex; gap: 0.5rem; }
+      .jv-comment-input {
+        width: 100%; box-sizing: border-box; min-height: 3.2rem;
+        padding: 0.4rem 0.5rem; margin-top: 0.5rem;
+        border: 1px solid #8884; border-radius: 6px;
+        font-family: inherit; font-size: 0.85rem; resize: vertical;
+      }
+      .jv-worklog-input {
+        flex: 1; padding: 0.3rem 0.5rem;
+        border: 1px solid #8884; border-radius: 6px; font-size: 0.8rem;
+      }
+      .jv-write-error { color: #c0392b; font-size: 0.8rem; margin: 0.25rem 0; }
     </style>
   </head>
   <body>

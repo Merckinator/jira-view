@@ -16,6 +16,7 @@
 //// order save surfaces as a toolbar note; the visual order stands until
 //// the next refresh.
 
+import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/list
@@ -33,6 +34,7 @@ import lustre/element.{type Element, text}
 import lustre/element/html
 import lustre/element/keyed
 import lustre/event
+import shared/adf
 import shared/types.{type Issue, type IssueDetail}
 
 /// The plan's default view. JQL must be bounded: the new search endpoint
@@ -54,6 +56,16 @@ pub type Model {
     cursor: Option(Int),
     /// Set when the last order save failed; cleared by the next success.
     order_error: Option(String),
+    /// Transitions of the open issue, fetched when the panel opens.
+    transitions: Option(Result(List(types.Transition), String)),
+    /// Panel write errors (transition/comment/worklog failures).
+    write_error: Option(String),
+    /// Comment/worklog drafts and the texts/entries optimistically sent
+    /// (rendered as "sending…" until the server confirms).
+    comment_draft: String,
+    pending_comments: List(String),
+    worklog_draft: String,
+    pending_worklog: List(String),
   )
 }
 
@@ -89,6 +101,19 @@ pub type Msg {
   Dropped(from: Int, to: Int)
   /// Result of the PATCH that persists a new ordering.
   OrderSaved(Result(Nil, String))
+  // — Phase 4 writes —
+  GotTransitions(Result(List(types.Transition), String))
+  /// Click on a transition button: status flips optimistically, then the
+  /// POST confirms (or a refetch undoes it).
+  TransitionClicked(transition: types.Transition)
+  /// Result of the transition POST for the open issue.
+  GotTransition(key: String, to_status: String, result: Result(Nil, String))
+  SetCommentDraft(String)
+  CommentClicked
+  GotComment(Result(types.Comment, String))
+  SetWorklogDraft(String)
+  WorklogClicked
+  GotWorklog(Result(types.WorklogEntry, String))
 }
 
 pub fn main() {
@@ -116,6 +141,12 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       selected: None,
       cursor: None,
       order_error: None,
+      transitions: None,
+      write_error: None,
+      comment_draft: "",
+      pending_comments: [],
+      worklog_draft: "",
+      pending_worklog: [],
     ),
     effect.batch([
       fetch_issues(default_jql),
@@ -140,7 +171,13 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     )
     Select(key) -> open_detail(model, key)
     GotDetail(Ok(detail)) -> #(
-      Model(..model, selected: Some(DetailLoaded(detail))),
+      Model(
+        ..model,
+        selected: Some(DetailLoaded(detail)),
+        // The fresh detail also refreshes the matching row (used after
+        // transition failures to undo the optimistic flip).
+        state: sync_ready_row(model.state, detail.issue),
+      ),
       effect.none(),
     )
     GotDetail(Error(message)) -> #(
@@ -183,14 +220,221 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       Model(..model, order_error: Some(message)),
       effect.none(),
     )
+    GotTransitions(Ok(transitions)) -> #(
+      Model(..model, transitions: Some(Ok(transitions))),
+      effect.none(),
+    )
+    GotTransitions(Error(message)) -> #(
+      Model(..model, transitions: Some(Error(message))),
+      effect.none(),
+    )
+    TransitionClicked(transition) ->
+      case selected_key(model) {
+        Ok(key) -> #(
+          Model(
+            ..model,
+            // Optimistic: flip the row + the panel status immediately; a
+            // failed POST is undone by the refetch in GotTransition below.
+            state: flip_row_status(model.state, key, transition.to_status),
+            selected: flip_detail_status(model.selected, transition.to_status),
+            write_error: None,
+          ),
+          post_transition(key, transition),
+        )
+        Error(_) -> #(model, effect.none())
+      }
+    GotTransition(_key, _to_status, Ok(_)) -> #(model, effect.none())
+    GotTransition(key, _to_status, Error(message)) -> #(
+      Model(..model, write_error: Some(message)),
+      fetch_detail(key),
+    )
+    SetCommentDraft(text) -> #(
+      Model(..model, comment_draft: text),
+      effect.none(),
+    )
+    CommentClicked ->
+      case selected_key(model) {
+        Ok(key) ->
+          case string.trim(model.comment_draft) {
+            "" -> #(model, effect.none())
+            text -> #(
+              Model(
+                ..model,
+                pending_comments: [text, ..model.pending_comments],
+                comment_draft: "",
+                write_error: None,
+              ),
+              post_comment(key, text),
+            )
+          }
+        Error(_) -> #(model, effect.none())
+      }
+    GotComment(Ok(comment)) -> #(
+      Model(
+        ..model,
+        pending_comments: drop_first(model.pending_comments),
+        selected: append_comment(model.selected, comment),
+      ),
+      effect.none(),
+    )
+    GotComment(Error(message)) -> #(
+      Model(
+        ..model,
+        pending_comments: drop_first(model.pending_comments),
+        write_error: Some(message),
+      ),
+      effect.none(),
+    )
+    SetWorklogDraft(text) -> #(
+      Model(..model, worklog_draft: text),
+      effect.none(),
+    )
+    WorklogClicked ->
+      case selected_key(model) {
+        Ok(key) ->
+          case string.trim(model.worklog_draft) {
+            "" -> #(model, effect.none())
+            time_spent -> #(
+              Model(
+                ..model,
+                pending_worklog: [time_spent, ..model.pending_worklog],
+                worklog_draft: "",
+                write_error: None,
+              ),
+              post_worklog(key, time_spent),
+            )
+          }
+        Error(_) -> #(model, effect.none())
+      }
+    GotWorklog(Ok(entry)) -> #(
+      Model(
+        ..model,
+        pending_worklog: drop_first(model.pending_worklog),
+        selected: append_worklog(model.selected, entry),
+      ),
+      effect.none(),
+    )
+    GotWorklog(Error(message)) -> #(
+      Model(
+        ..model,
+        pending_worklog: drop_first(model.pending_worklog),
+        write_error: Some(message),
+      ),
+      effect.none(),
+    )
   }
 }
 
 fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
   #(
-    Model(..model, selected: Some(DetailLoading(key))),
-    fetch_detail(key),
+    Model(
+      ..model,
+      selected: Some(DetailLoading(key)),
+      transitions: None,
+      write_error: None,
+      comment_draft: "",
+      pending_comments: [],
+      worklog_draft: "",
+      pending_worklog: [],
+    ),
+    effect.batch([fetch_detail(key), fetch_transitions(key)]),
   )
+}
+
+/// The key of the issue whose detail panel is open.
+fn selected_key(model: Model) -> Result(String, Nil) {
+  case model.selected {
+    Some(DetailLoading(key)) -> Ok(key)
+    Some(DetailLoaded(info)) -> Ok(info.issue.key)
+    Some(DetailFailed(_)) -> Error(Nil)
+    None -> Error(Nil)
+  }
+}
+
+/// Optimistic status flip over the ready list; category is unknowable from
+/// a transition (re-set on the next detail load).
+fn flip_row_status(state: State, key: String, to_status: String) -> State {
+  case state {
+    Ready(issues) ->
+      Ready(map_issue(issues, key, fn(issue) {
+        types.Issue(
+          ..issue,
+          status: types.Status(to_status, issue.status.category),
+        )
+      }))
+    state -> state
+  }
+}
+
+fn flip_detail_status(
+  selected: Option(Detail),
+  to_status: String,
+) -> Option(Detail) {
+  case selected {
+    Some(DetailLoaded(info)) ->
+      Some(DetailLoaded(types.IssueDetail(
+        ..info,
+        issue: types.Issue(
+          ..info.issue,
+          status: types.Status(to_status, info.issue.status.category),
+        ),
+      )))
+    selected -> selected
+  }
+}
+
+/// Reconcile one row of the ready list with a freshly fetched issue.
+fn sync_ready_row(state: State, fresh: types.Issue) -> State {
+  case state {
+    Ready(issues) -> Ready(sync_issue(issues, fresh))
+    state -> state
+  }
+}
+
+fn sync_issue(issues: List(types.Issue), fresh: types.Issue) -> List(types.Issue) {
+  map_issue(issues, fresh.key, fn(_) { fresh })
+}
+
+fn map_issue(
+  issues: List(types.Issue),
+  key: String,
+  transform: fn(types.Issue) -> types.Issue,
+) -> List(types.Issue) {
+  list.map(issues, fn(issue) {
+    case issue.key == key {
+      True -> transform(issue)
+      False -> issue
+    }
+  })
+}
+
+fn drop_first(items: List(a)) -> List(a) {
+  case items {
+    [_, ..rest] -> rest
+    [] -> []
+  }
+}
+
+fn append_comment(selected: Option(Detail), comment: types.Comment) -> Option(Detail) {
+  case selected {
+    Some(DetailLoaded(info)) ->
+      Some(DetailLoaded(types.IssueDetail(
+        ..info,
+        comments: list.append(info.comments, [comment]),
+      )))
+    selected -> selected
+  }
+}
+
+fn append_worklog(selected: Option(Detail), entry: types.WorklogEntry) -> Option(Detail) {
+  case selected {
+    Some(DetailLoaded(info)) ->
+      Some(DetailLoaded(types.IssueDetail(
+        ..info,
+        worklog: list.append(info.worklog, [entry]),
+      )))
+    selected -> selected
+  }
 }
 
 /// j/k: move the cursor, clamped inside the visible rows; starting out
@@ -283,6 +527,73 @@ fn save_order(issues: List(Issue)) -> Effect(Msg) {
   )
 }
 
+fn fetch_transitions(key: String) -> Effect(Msg) {
+  fetch.get("/jira/issue/" <> key <> "/transitions", fn(response) {
+    case response {
+      Ok(body) ->
+        case json.parse(body, types.jira_transitions_decoder()) {
+          Ok(transitions) -> GotTransitions(Ok(transitions))
+          Error(error) -> GotTransitions(Error(string.inspect(error)))
+        }
+      Error(message) -> GotTransitions(Error(message))
+    }
+  })
+}
+
+fn post_transition(key: String, transition: types.Transition) -> Effect(Msg) {
+  fetch.post_json(
+    "/jira/issue/" <> key <> "/transition",
+    json.to_string(json.object([#("id", json.string(transition.id))])),
+    fn(result) { GotTransition(key, transition.to_status, result) },
+  )
+}
+
+fn post_comment(key: String, text: String) -> Effect(Msg) {
+  fetch.post_json_raw(
+    "/jira/issue/" <> key <> "/comment",
+    json.to_string(json.object([#("text", json.string(text))])),
+    fn(response) {
+      case response {
+        Ok(body) ->
+          case json.parse(body, created_comment_decoder()) {
+            Ok(comment) -> GotComment(Ok(comment))
+            Error(error) -> GotComment(Error(string.inspect(error)))
+          }
+        Error(message) -> GotComment(Error(message))
+      }
+    },
+  )
+}
+
+fn post_worklog(key: String, time_spent: String) -> Effect(Msg) {
+  fetch.post_json_raw(
+    "/jira/issue/" <> key <> "/worklog",
+    json.to_string(json.object([#("time_spent", json.string(time_spent))])),
+    fn(response) {
+      case response {
+        Ok(body) ->
+          case json.parse(body, created_worklog_decoder()) {
+            Ok(entry) -> GotWorklog(Ok(entry))
+            Error(error) -> GotWorklog(Error(string.inspect(error)))
+          }
+        Error(message) -> GotWorklog(Error(message))
+      }
+    },
+  )
+}
+
+/// The created-record responses are {"comment": {…}} / {"worklog": {…}}:
+/// decode straight to the inner record.
+fn created_comment_decoder() -> decode.Decoder(types.Comment) {
+  use comment <- decode.field("comment", types.app_comment_decoder())
+  decode.success(comment)
+}
+
+fn created_worklog_decoder() -> decode.Decoder(types.WorklogEntry) {
+  use entry <- decode.field("worklog", types.app_worklog_decoder())
+  decode.success(entry)
+}
+
 fn fetch_issues(jql: String) -> Effect(Msg) {
   fetch.get(issues_url(jql), fn(response) {
     case response {
@@ -349,7 +660,7 @@ pub fn view(model: Model) -> Element(Msg) {
         }
     },
     case model.selected {
-      Some(detail) -> detail_panel(detail)
+      Some(detail) -> detail_panel(model, detail)
       None -> element.none()
     },
   ])
@@ -421,7 +732,7 @@ fn assignee_name(assignee: option.Option(types.User)) -> String {
   }
 }
 
-fn detail_panel(detail: Detail) -> Element(Msg) {
+fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
   html.aside([attribute.class("jv-detail")], [
     html.div([attribute.class("jv-detail-head")], [
       html.h2([], [text(detail_title(detail))]),
@@ -434,14 +745,142 @@ fn detail_panel(detail: Detail) -> Element(Msg) {
       DetailFailed(message) ->
         html.p([attribute.class("jv-error")], [text("Error: " <> message)])
       DetailLoaded(info) ->
-        html.div([], [
+        html.div([attribute.class("jv-detail-body")], [
           html.p([attribute.class("jv-detail-meta")], [
             text(info.issue.key <> " · " <> info.issue.status.name),
           ]),
+          case model.write_error {
+            Some(message) ->
+              html.p([attribute.class("jv-write-error")], [text(message)])
+            None -> element.none()
+          },
+          transitions_row(model.transitions),
           adf_view.render(info.description),
+          comments_section(
+            info.comments,
+            model.pending_comments,
+            model.comment_draft,
+          ),
+          worklog_section(
+            info.worklog,
+            model.pending_worklog,
+            model.worklog_draft,
+          ),
         ])
     },
   ])
+}
+
+/// One button per available transition of the open issue. The POST applies
+/// optimistically in `update`; buttons stay enabled (double clicks are
+/// guarded by Jira itself rejecting invalid moves).
+fn transitions_row(
+  transitions: Option(Result(List(types.Transition), String)),
+) -> Element(Msg) {
+  html.div([attribute.class("jv-transitions")], case transitions {
+    Some(Ok(transitions)) ->
+      list.map(transitions, fn(transition) {
+        html.button(
+          [attribute.class("jv-transition"), event.on_click(TransitionClicked(transition))],
+          [text(transition.name)],
+        )
+      })
+    Some(Error(message)) -> [
+      html.span([attribute.class("jv-note")], [text("Transitions: " <> message)]),
+    ]
+    None -> [html.span([attribute.class("jv-note")], [text("Transitions…")])]
+  })
+}
+
+fn comments_section(
+  comments: List(types.Comment),
+  pending: List(String),
+  draft: String,
+) -> Element(Msg) {
+  html.div(
+    [attribute.class("jv-section")],
+    list.flatten([
+      [html.h3([attribute.class("jv-section-title")], [text("Comments")])],
+      list.map(pending, fn(pending_text) {
+        html.div([attribute.class("jv-comment jv-pending")], [
+          html.div([attribute.class("jv-comment-meta")], [text("sending…")]),
+          adf_view.render(adf_document(pending_text)),
+        ])
+      }),
+      list.map(comments, fn(comment) {
+        html.div([attribute.class("jv-comment")], [
+          html.div([attribute.class("jv-comment-meta")], [
+            text(comment.author <> " · " <> comment.created),
+          ]),
+          adf_view.render(comment.body),
+        ])
+      }),
+      [
+        html.textarea([
+          attribute.class("jv-comment-input"),
+          attribute.placeholder("Add a comment…"),
+          event.on_input(SetCommentDraft),
+        ], draft),
+        html.div([attribute.class("jv-actions")], [
+          html.button([attribute.class("jv-comment-send"), event.on_click(CommentClicked)], [
+            text("Comment"),
+          ]),
+        ]),
+      ],
+    ]),
+  )
+}
+
+fn worklog_section(
+  entries: List(types.WorklogEntry),
+  pending: List(String),
+  draft: String,
+) -> Element(Msg) {
+  html.div(
+    [attribute.class("jv-section")],
+    list.flatten([
+      [html.h3([attribute.class("jv-section-title")], [text("Work log")])],
+      list.map(pending, fn(time_spent) {
+        html.div([attribute.class("jv-worklog jv-pending")], [
+          html.div([attribute.class("jv-comment-meta")], [
+            text("sending… · " <> time_spent),
+          ]),
+        ])
+      }),
+      list.map(entries, fn(entry) {
+        let meta = entry.author <> " · " <> entry.time_spent <> " · " <> entry.started
+        html.div([attribute.class("jv-worklog")], [
+          html.div([attribute.class("jv-comment-meta")], [text(meta)]),
+          case entry.body {
+            [] -> element.none()
+            body -> adf_view.render(body)
+          },
+        ])
+      }),
+      [
+        html.div([attribute.class("jv-actions jv-worklog-form")], [
+          html.input([
+            attribute.type_("text"),
+            attribute.class("jv-worklog-input"),
+            attribute.placeholder("Time spent, e.g. 25m"),
+            attribute.value(draft),
+            event.on_input(SetWorklogDraft),
+          ]),
+          html.button([attribute.class("jv-worklog-send"), event.on_click(WorklogClicked)], [
+            text("Log work"),
+          ]),
+        ]),
+      ],
+    ]),
+  )
+}
+
+/// The ADF document for an optimistic comment still being sent.
+fn adf_document(text: String) -> List(adf.AdfNode) {
+  case adf.paragraph_document(text).content {
+    [paragraph, ..] -> [paragraph]
+    [] -> []
+  }
 }
 
 fn detail_title(detail: Detail) -> String {
