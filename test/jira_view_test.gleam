@@ -342,6 +342,28 @@ pub fn adf_document_shape_test() {
   )
 }
 
+pub fn adf_safe_link_test() {
+  adf.safe_link("https://example.com")
+  |> should.be_true
+  adf.safe_link("HTTP://EXAMPLE.COM")
+  |> should.be_true
+  adf.safe_link("mailto:jeff@example.com")
+  |> should.be_true
+  adf.safe_link("/issues/KAN-1")
+  |> should.be_true
+  adf.safe_link("#comment-1")
+  |> should.be_true
+
+  adf.safe_link("javascript:alert(1)")
+  |> should.be_false
+  adf.safe_link("  JaVaScRiPt:alert(1)")
+  |> should.be_false
+  adf.safe_link("data:text/html,<script>alert(1)</script>")
+  |> should.be_false
+  adf.safe_link("")
+  |> should.be_false
+}
+
 // Phase 4: comment / worklog decoders against captured real shapes
 
 pub fn jira_comment_decoder_capture_test() {

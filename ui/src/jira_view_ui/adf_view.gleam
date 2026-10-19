@@ -7,7 +7,7 @@ import gleam/list
 import lustre/attribute
 import lustre/element.{type Element, text}
 import lustre/element/html
-import shared/adf.{type AdfNode}
+import shared/adf.{type AdfNode, safe_link}
 
 /// Render the content list of an ADF document.
 pub fn render(nodes: List(AdfNode)) -> Element(msg) {
@@ -44,7 +44,11 @@ fn marked(node: AdfNode) -> Element(msg) {
       "strong" -> html.strong([], [current])
       "em" -> html.em([], [current])
       "code" -> html.code([], [current])
-      "link" if mark.href != "" -> html.a([attribute.href(mark.href)], [current])
+      "link" ->
+        case safe_link(mark.href) {
+          True -> html.a([attribute.href(mark.href)], [current])
+          False -> current
+        }
       _ -> current
     }
   })

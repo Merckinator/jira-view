@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **11 / 19 decided, 11 / 19 repo changes done** (finding 1 still needs
+Progress: **12 / 19 decided, 12 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -217,7 +217,7 @@ a manual token rotation at Atlassian).
     everything else (including SVG and HTML) gets `content-disposition:
     attachment`. Header test covers all four cases. `gleam test`: 53 passed.
 
-- [ ] **12. ADF links accept `javascript:` URLs**
+- [x] **12. ADF links accept `javascript:` URLs**
   - **Files:** `ui/src/jira_view_ui/adf_view.gleam:41-50`,
     `shared/src/shared/adf.gleam:51-59`
   - **What:** Link marks become `html.a([attribute.href(mark.href)], ...)` with
@@ -228,7 +228,9 @@ a manual token rotation at Atlassian).
   - **Fix:** Only render `http://`, `https://`, `mailto:` or safe relative
     links; otherwise show plain text.
   - **If skipped:** Same-origin script execution from Jira content.
-  - **Decision:** _pending_
+  - **Decision:** `shared/adf.safe_link` allows http(s), mailto, `/...` and
+    `#...`; everything else falls back to text. The test covers `javascript:`,
+    mixed case, `data:`, and empty hrefs. `gleam test`: 54 passed; UI compiles.
 
 - [ ] **13. The riskiest UI logic has no tests**
   - **Files:** `ui/src/jira_view_ui.gleam:760-830`; no `ui/test/`

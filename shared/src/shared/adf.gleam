@@ -11,6 +11,7 @@
 import gleam/dynamic/decode
 import gleam/json.{type Json}
 import gleam/list
+import gleam/string
 
 pub type AdfMark {
   /// Inline mark ("strong", "em", "code", "link", ...).
@@ -56,6 +57,17 @@ fn mark_decoder() -> decode.Decoder(AdfMark) {
     decode.string,
   ))
   decode.success(AdfMark(kind, href))
+}
+
+/// Only http(s), mailto and local links are rendered. A `javascript:` or
+/// `data:` href would run in the app's origin, so it falls back to plain text.
+pub fn safe_link(href: String) -> Bool {
+  let href = string.lowercase(string.trim(href))
+  string.starts_with(href, "http://")
+  || string.starts_with(href, "https://")
+  || string.starts_with(href, "mailto:")
+  || string.starts_with(href, "/")
+  || string.starts_with(href, "#")
 }
 
 // ————— building / encoding —————
