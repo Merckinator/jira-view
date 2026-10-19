@@ -5,12 +5,14 @@
 //// endpoints, the private per-view ordering endpoint, and the built
 //// frontend bundle.
 
+import gleam/bytes_tree
 import gleam/dynamic/decode
 import gleam/http
 import gleam/http/request.{path_segments}
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import jira_view/config
@@ -18,6 +20,7 @@ import jira_view/db
 import jira_view/jira
 import shared/adf
 import shared/types
+import sqlight
 import wisp
 
 pub fn handle_request(request: wisp.Request) -> wisp.Response {
@@ -38,9 +41,38 @@ pub fn handle_request(request: wisp.Request) -> wisp.Response {
       wisp.require_method(request, http.Post, fn() { comment(request, key) })
     ["jira", "issue", key, "worklog"] ->
       wisp.require_method(request, http.Post, fn() { worklog(request, key) })
+    ["jira", "attachment", attachment_id] ->
+      wisp.require_method(request, http.Get, fn() { attachment(attachment_id) })
+    ["jira", "avatar", account_id] ->
+      wisp.require_method(request, http.Get, fn() { avatar(account_id) })
+    ["jira", "board", board_id, "issues"] ->
+      wisp.require_method(request, http.Get, fn() {
+        board_issues(request, board_id)
+      })
+    ["jira", "boards"] -> wisp.require_method(request, http.Get, boards)
+    ["jira", "views"] -> views_endpoint(request)
+    ["jira", "views", view_id] -> view_endpoint(request, view_id)
     ["jira", "views", view_id, "order"] ->
       wisp.require_method(request, http.Patch, fn() { save_order(request, view_id) })
     _ -> wisp.not_found()
+  }
+}
+
+/// /jira/views is a collection endpoint: GET lists, POST creates.
+fn views_endpoint(request: wisp.Request) -> wisp.Response {
+  case request.method {
+    http.Get -> list_views()
+    http.Post -> create_view(request)
+    _ -> wisp.method_not_allowed([http.Get, http.Post])
+  }
+}
+
+/// /jira/views/:id: PUT updates, DELETE removes.
+fn view_endpoint(request: wisp.Request, view_id: String) -> wisp.Response {
+  case request.method {
+    http.Put -> update_view(request, view_id)
+    http.Delete -> delete_view(view_id)
+    _ -> wisp.method_not_allowed([http.Put, http.Delete])
   }
 }
 
@@ -362,6 +394,261 @@ pub fn parse_worklog_body(body: String) -> Result(String, String) {
   case json.parse(body, decode.field("time_spent", decode.string, decode.success)) {
     Ok(time_spent) -> Ok(string.trim(time_spent))
     Error(_) -> Error("expected {\"time_spent\": \"…\"} JSON")
+  }
+}
+
+// ————— saved views (Phase 5) —————
+
+/// With a per-request connection this small helper keeps the handlers tidy;
+/// every view operation needs open+migrate first.
+fn with_views(
+  next: fn(sqlight.Connection) -> wisp.Response,
+) -> wisp.Response {
+  case db.open() {
+    Error(error) -> json_error("cache_unavailable", string.inspect(error), 500)
+    Ok(conn) ->
+      case db.migrate(conn) {
+        Error(error) -> json_error("cache_unavailable", string.inspect(error), 500)
+        Ok(_) -> next(conn)
+      }
+  }
+}
+
+fn db_error_response(error: db.DbError, kind: String) -> wisp.Response {
+  case error {
+    db.NotFound -> json_error(kind, "no such view", 404)
+    other -> json_error("cache_write_failed", string.inspect(other), 500)
+  }
+}
+
+/// GET /jira/views — every saved view in creation order. The database is
+/// seeded with one default view, so this is only empty by deletion.
+fn list_views() -> wisp.Response {
+  with_views(fn(conn) {
+    case db.list_views(conn) {
+      Ok(views) ->
+        json.object([
+          #("views", json.array(views, types.view_to_json)),
+        ])
+        |> json.to_string
+        |> wisp.json_response(200)
+      Error(error) -> json_error("cache_read_failed", string.inspect(error), 500)
+    }
+  })
+}
+
+/// POST /jira/views — body {"name", "jql" | "board_id", "columns"?}; the
+/// id is a unique slug of the name (server-side, since it is the key of the
+/// private ordering state).
+fn create_view(request: wisp.Request) -> wisp.Response {
+  use <- wisp.require_content_type(request, "application/json")
+  use body <- wisp.require_string_body(request)
+  case parse_view_body(body) {
+    Error(message) -> json_error("bad_request", message, 400)
+    Ok(view) ->
+      with_views(fn(conn) {
+        let view =
+          types.ViewDef(
+            ..view,
+            id: db.unique_view_id(conn, view.name),
+          )
+        case db.create_view(conn, view) {
+          Ok(_) ->
+            types.view_to_json(view) |> json.to_string |> wisp.json_response(201)
+          Error(error) -> db_error_response(error, "create_failed")
+        }
+      })
+  }
+}
+
+/// PUT /jira/views/:id — body like create; replaces name/source/columns.
+/// The private ordering is left untouched (a JQL edit does not throw away
+/// the user's orderings).
+fn update_view(request: wisp.Request, view_id: String) -> wisp.Response {
+  use <- wisp.require_content_type(request, "application/json")
+  use body <- wisp.require_string_body(request)
+  case parse_view_body(body) {
+    Error(message) -> json_error("bad_request", message, 400)
+    Ok(view) ->
+      with_views(fn(conn) {
+        case db.update_view(conn, view_id, view) {
+          Ok(_) ->
+            types.ViewDef(
+              ..view,
+              id: view_id,
+            )
+            |> types.view_to_json
+            |> json.to_string
+            |> wisp.json_response(200)
+          Error(error) -> db_error_response(error, "update_failed")
+        }
+      })
+  }
+}
+
+/// DELETE /jira/views/:id — also drops the view's private ordering rows.
+/// Deleting an absent id is 404 (a no-op DELETE would silently succeed).
+fn delete_view(view_id: String) -> wisp.Response {
+  with_views(fn(conn) {
+    case db.get_view(conn, view_id) {
+      Error(_) -> db_error_response(db.NotFound, "delete_failed")
+      Ok(_) ->
+        case db.delete_view(conn, view_id) {
+          Ok(_) ->
+            json.object([
+              #("deleted", json.bool(True)),
+              #("id", json.string(view_id)),
+            ])
+            |> json.to_string
+            |> wisp.json_response(200)
+          Error(error) -> db_error_response(error, "delete_failed")
+        }
+    }
+  })
+}
+
+/// The create/update view body shape. Exposed for tests. Validates:
+/// name, and exactly one of jql / board_id.
+pub fn parse_view_body(body: String) -> Result(types.ViewDef, String) {
+  case json.parse(body, view_body_decoder()) {
+    Error(_) ->
+      Error("expected {\"name\", \"jql\"|\"board_id\", \"columns\"} JSON")
+    Ok(#(name, jql, board_id, columns)) ->
+      case string.trim(name) {
+        "" -> Error("name must not be empty")
+        name ->
+          case jql, board_id {
+            None, None -> Error("set jql or board_id")
+            Some(_), Some(_) ->
+              Error("set either jql or board_id, not both")
+            Some(jql), None ->
+              case jql {
+                "" -> Error("jql must not be empty")
+                _ ->
+                  Ok(types.ViewDef(
+                    id: "",
+                    name:,
+                    source: types.Jql(jql),
+                    columns:,
+                  ))
+              }
+            None, Some(board_id) ->
+              Ok(types.ViewDef(
+                id: "",
+                name:,
+                source: types.Board(board_id),
+                columns:,
+              ))
+          }
+      }
+  }
+}
+
+fn view_body_decoder() -> decode.Decoder(
+  #(String, Option(String), Option(Int), List(String)),
+) {
+  use name <- decode.field("name", decode.string)
+  use jql <- decode.optional_field("jql", None, decode.optional(decode.string))
+  use board_id <- decode.optional_field(
+    "board_id",
+    None,
+    decode.optional(decode.int),
+  )
+  use columns <- decode.then(decode.optionally_at(
+    ["columns"],
+    db.default_columns(),
+    decode.list(decode.string),
+  ))
+  decode.success(#(name, jql, board_id, columns))
+}
+
+// ————— board views (Phase 5) —————
+
+/// GET /jira/boards — the agile board picker's options.
+fn boards() -> wisp.Response {
+  case config.load() {
+    Error(message) -> json_error("configuration_incomplete", message, 503)
+    Ok(cfg) ->
+      case jira.boards(cfg) {
+        Ok(boards) ->
+          json.object([
+            #("boards", json.array(boards, types.board_to_json)),
+          ])
+          |> json.to_string
+          |> wisp.json_response(200)
+        Error(error) -> jira_error_response(error)
+      }
+  }
+}
+
+/// GET /jira/board/:id/issues?view=… — the board's issues, bulk-fetched,
+/// cached, and returned in the referring view's merged ordering — same
+/// pipeline and response shape as /jira/search.
+fn board_issues(request: wisp.Request, board_id: String) -> wisp.Response {
+  case int.parse(board_id) {
+    Error(_) ->
+      json_error("bad_request", "board id must be an integer", 400)
+    Ok(board_id) -> {
+      let view_id = case list.key_find(wisp.get_query(request), "view") {
+        Ok(view_id) -> view_id
+        Error(_) -> default_view_id
+      }
+      case config.load() {
+        Error(message) -> json_error("configuration_incomplete", message, 503)
+        Ok(cfg) ->
+          case jira.board_issues(cfg, board_id) {
+            Ok(issues) ->
+              case cache_and_merge(issues, view_id) {
+                Ok(ordered) ->
+                  json.object([
+                    #("issues", json.array(ordered, types.issue_to_json)),
+                  ])
+                  |> json.to_string
+                  |> wisp.json_response(200)
+                Error(error) ->
+                  json_error("cache_write_failed", string.inspect(error), 500)
+              }
+            Error(error) -> jira_error_response(error)
+          }
+      }
+    }
+  }
+}
+
+// ————— binary proxies (Phase 5) —————
+
+/// GET /jira/avatar/:account_id — the user's 48x48 avatar bytes as served
+/// by the avatar CDN (public; no credentials travel to it), with a
+/// day-long cache header.
+fn avatar(account_id: String) -> wisp.Response {
+  case config.load() {
+    Error(message) -> json_error("configuration_incomplete", message, 503)
+    Ok(cfg) ->
+      case jira.avatar(cfg, account_id) {
+        Ok(#(bits, content_type)) ->
+          wisp.response(200)
+          |> wisp.set_body(wisp.Bytes(bytes_tree.from_bit_array(bits)))
+          |> wisp.set_header("content-type", content_type)
+          |> wisp.set_header("cache-control", "max-age=86400")
+        Error(error) -> jira_error_response(error)
+      }
+  }
+}
+
+/// GET /jira/attachment/:id — the attachment content, byte-level, with the
+/// auth headers the browser cannot have. Inline images render directly;
+/// other files download through anchor download= (same-origin).
+fn attachment(attachment_id: String) -> wisp.Response {
+  case config.load() {
+    Error(message) -> json_error("configuration_incomplete", message, 503)
+    Ok(cfg) ->
+      case jira.get_bits(cfg, jira.attachment_content_path(attachment_id)) {
+        Ok(#(bits, content_type)) ->
+          wisp.response(200)
+          |> wisp.set_body(wisp.Bytes(bytes_tree.from_bit_array(bits)))
+          |> wisp.set_header("content-type", content_type)
+        Error(error) -> jira_error_response(error)
+      }
   }
 }
 

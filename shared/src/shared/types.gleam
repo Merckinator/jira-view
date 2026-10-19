@@ -55,7 +55,7 @@ pub type SearchPage {
 
 /// Full issue for the detail view: the pruned issue plus the description
 /// decoded out of its ADF document (empty list = no description), the
-/// issue's comments and its work log.
+/// issue's comments, work log and attachments.
 /// Shape: GET /rest/api/3/issue/{key} — same `fields` nesting as search.
 pub type IssueDetail {
   IssueDetail(
@@ -63,7 +63,27 @@ pub type IssueDetail {
     description: List(AdfNode),
     comments: List(Comment),
     worklog: List(WorklogEntry),
+    attachments: List(Attachment),
   )
+}
+
+/// A file attached to an issue; served to the browser through
+/// GET /jira/attachment/:id (the Jira content URL needs the API token, and
+/// the browser must never talk to anything but localhost).
+pub type Attachment {
+  Attachment(
+    /// Numeric id used in the proxy URL.
+    id: String,
+    filename: String,
+    mime_type: String,
+    size: Int,
+  )
+}
+
+/// A board from GET /rest/agile/1.0/board. `kind` is "scrum"/"kanban"/…
+/// (informational in the UI's board picker).
+pub type AgileBoard {
+  AgileBoard(id: Int, name: String, kind: String)
 }
 
 /// A comment on an issue; `author` is the author's display name and `body`
@@ -90,6 +110,29 @@ pub type Transition {
 /// ("resolution", …); the resolution field is the one this app auto-fills.
 pub type TransitionField {
   TransitionField(key: String, required: Bool)
+}
+
+// ————— views (Phase 5) —————
+
+/// A saved view: a source (JQL query or a board's active sprint) plus the
+/// columns it renders. Private ordering lives separately, keyed by a view's
+/// `id` in the `view_issues` table.
+pub type ViewDef {
+  ViewDef(
+    /// Slug id, also a URL segment and the ordering-state key.
+    id: String,
+    name: String,
+    source: ViewSource,
+    /// Ordered subset of the known columns: key/summary/status/assignee/updated.
+    columns: List(String),
+  )
+}
+
+pub type ViewSource {
+  /// A bounded JQL query.
+  Jql(String)
+  /// A board id; its issues are bulk-fetched via the agile API.
+  Board(Int)
 }
 
 // ————— decoders —————
@@ -225,12 +268,64 @@ pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
     [],
     decode.list(jira_worklog_decoder()),
   ))
+  use attachments <- decode.then(decode.optionally_at(
+    ["fields", "attachment"],
+    [],
+    decode.list(attachment_decoder()),
+  ))
   decode.success(IssueDetail(
     issue: Issue(key:, id:, summary:, status:, assignee:, updated:),
     description:,
     comments:,
     worklog:,
+    attachments:,
   ))
+}
+
+/// One page of an agile list response ({issues: […], startAt, maxResults,
+/// total}): the issues plus `total` for the pagination loop. Issue shape
+/// inside is identical to the platform search.
+pub fn agile_page_decoder() -> decode.Decoder(#(List(Issue), Int)) {
+  use issues <- decode.field("issues", decode.list(issue_decoder()))
+  use total <- decode.then(decode.optionally_at(["total"], 0, decode.int))
+  decode.success(#(issues, total))
+}
+
+/// The user's 48x48 avatar CDN URL from /rest/api/3/user?expand=avatarUrls.
+pub fn avatar_url_decoder() -> decode.Decoder(String) {
+  decode.optionally_at(["avatarUrls", "48x48"], "", decode.string)
+}
+
+/// Jira's attachment metadata: {id, filename, mimeType, size, …}.
+pub fn attachment_decoder() -> decode.Decoder(Attachment) {
+  use id <- decode.field("id", decode.string)
+  use filename <- decode.field("filename", decode.string)
+  use mime_type <- decode.then(decode.optionally_at(
+    ["mimeType"],
+    "application/octet-stream",
+    decode.string,
+  ))
+  use size <- decode.then(decode.optionally_at(["size"], 0, decode.int))
+  decode.success(Attachment(id:, filename:, mime_type:, size:))
+}
+
+/// One page of the agile board list: the boards plus `total` for the
+/// pagination loop in jira.gleam.
+pub fn boards_page_decoder() -> decode.Decoder(#(List(AgileBoard), Int)) {
+  use boards <- decode.then(decode.optionally_at(
+    ["values"],
+    [],
+    decode.list(board_decoder()),
+  ))
+  use total <- decode.then(decode.optionally_at(["total"], 0, decode.int))
+  decode.success(#(boards, total))
+}
+
+fn board_decoder() -> decode.Decoder(AgileBoard) {
+  use id <- decode.field("id", decode.int)
+  use name <- decode.optional_field("name", "", decode.string)
+  use kind <- decode.then(decode.optionally_at(["type"], "", decode.string))
+  decode.success(AgileBoard(id:, name:, kind:))
 }
 
 // ————— comments, worklog, transitions (Jira shapes + app pruned shapes) —————
@@ -381,4 +476,57 @@ pub fn worklog_to_json(entry: WorklogEntry) -> Json {
     #("time_spent", json.string(entry.time_spent)),
     #("body", json.array(entry.body, adf.adf_to_json)),
   ])
+}
+
+/// Encode a `ViewDef` in the app shape (flat: jql/board_id nullable).
+pub fn view_to_json(view: ViewDef) -> Json {
+  let #(jql, board_id) = case view.source {
+    Jql(jql) -> #(Some(jql), None)
+    Board(board_id) -> #(None, Some(board_id))
+  }
+  json.object([
+    #("id", json.string(view.id)),
+    #("name", json.string(view.name)),
+    #("jql", json.nullable(jql, json.string)),
+    #("board_id", json.nullable(board_id, json.int)),
+    #("columns", json.array(view.columns, json.string)),
+  ])
+}
+
+/// The app shape's view decoder (backend /jira/views responses).
+pub fn app_view_decoder() -> decode.Decoder(ViewDef) {
+  use id <- decode.field("id", decode.string)
+  use name <- decode.field("name", decode.string)
+  use jql <- decode.optional_field("jql", None, decode.optional(decode.string))
+  use board_id <- decode.optional_field(
+    "board_id",
+    None,
+    decode.optional(decode.int),
+  )
+  use columns <- decode.then(decode.optionally_at(
+    ["columns"],
+    [],
+    decode.list(decode.string),
+  ))
+  let source = case jql {
+    Some(jql) -> Jql(jql)
+    None -> Board(option.unwrap(board_id, 0))
+  }
+  decode.success(ViewDef(id:, name:, source:, columns:))
+}
+
+/// Encode a `AgileBoard` for the UI's board picker.
+pub fn board_to_json(board: AgileBoard) -> Json {
+  json.object([
+    #("id", json.int(board.id)),
+    #("name", json.string(board.name)),
+    #("kind", json.string(board.kind)),
+  ])
+}
+
+pub fn app_board_decoder() -> decode.Decoder(AgileBoard) {
+  use id <- decode.field("id", decode.int)
+  use name <- decode.optional_field("name", "", decode.string)
+  use kind <- decode.optional_field("kind", "", decode.string)
+  decode.success(AgileBoard(id:, name:, kind:))
 }

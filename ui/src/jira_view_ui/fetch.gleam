@@ -1,9 +1,9 @@
-//// Minimal fetch wrapper.
+//// Minimal fetch wrapper (lustre_http is unusable with stdlib 1.x — see
+//// fetch_ffi.mjs for the rationale; these FFI calls replace it).
 ////
-//// lustre_http (all published versions) pins gleam_stdlib < 1.0, which
-//// clashes with the shared decoders — so the HTTP call is this ~15-line
-//// fetch FFI instead. If lustre_http lands a stdlib-1.x release, switch
-//// back to it.
+//// Verbs: GET (any payload), PATCH/POST/PUT (JSON body, either mapped to
+//// `Ok(Nil)` or to the raw response body when the endpoint returns a
+//// created record), DELETE.
 
 import lustre/effect.{type Effect}
 
@@ -24,6 +24,16 @@ fn post_json_ffi(
   callback: fn(Result(String, String)) -> Nil,
 ) -> Nil
 
+@external(javascript, "./fetch_ffi.mjs", "put_json")
+fn put_json_ffi(
+  url: String,
+  body: String,
+  callback: fn(Result(String, String)) -> Nil,
+) -> Nil
+
+@external(javascript, "./fetch_ffi.mjs", "delete_json")
+fn delete_json_ffi(url: String, callback: fn(Result(String, String)) -> Nil) -> Nil
+
 /// GET a URL and map the raw response body into a message.
 pub fn get(
   url: String,
@@ -34,8 +44,7 @@ pub fn get(
   })
 }
 
-/// PATCH a JSON document; successes carry no usable payload, so callers see
-/// `Ok(Nil)` with only failures keeping the error detail.
+/// PATCH a JSON document; successes carry no usable payload.
 pub fn patch_json(
   url: String,
   body: String,
@@ -43,16 +52,12 @@ pub fn patch_json(
 ) -> Effect(msg) {
   effect.from(fn(dispatch) {
     patch_json_ffi(url, body, fn(result) {
-      dispatch(to_msg(case result {
-        Ok(_) -> Ok(Nil)
-        Error(message) -> Error(message)
-      }))
+      dispatch(to_msg(as_nil(result)))
     })
   })
 }
 
-/// POST a JSON document; successes carry no usable payload, so callers see
-/// `Ok(Nil)` with only failures keeping the error detail.
+/// POST a JSON document; successes carry no usable payload.
 pub fn post_json(
   url: String,
   body: String,
@@ -60,10 +65,7 @@ pub fn post_json(
 ) -> Effect(msg) {
   effect.from(fn(dispatch) {
     post_json_ffi(url, body, fn(result) {
-      dispatch(to_msg(case result {
-        Ok(_) -> Ok(Nil)
-        Error(message) -> Error(message)
-      }))
+      dispatch(to_msg(as_nil(result)))
     })
   })
 }
@@ -78,4 +80,31 @@ pub fn post_json_raw(
   effect.from(fn(dispatch) {
     post_json_ffi(url, body, fn(result) { dispatch(to_msg(result)) })
   })
+}
+
+/// PUT a JSON document and map the raw response body into a message.
+pub fn put_json_raw(
+  url: String,
+  body: String,
+  to_msg: fn(Result(String, String)) -> msg,
+) -> Effect(msg) {
+  effect.from(fn(dispatch) {
+    put_json_ffi(url, body, fn(result) { dispatch(to_msg(result)) })
+  })
+}
+
+/// DELETE a URL; successes carry no usable payload.
+pub fn delete_json(url: String, to_msg: fn(Result(Nil, String)) -> msg) -> Effect(msg) {
+  effect.from(fn(dispatch) {
+    delete_json_ffi(url, fn(result) {
+      dispatch(to_msg(as_nil(result)))
+    })
+  })
+}
+
+fn as_nil(result: Result(String, String)) -> Result(Nil, String) {
+  case result {
+    Ok(_) -> Ok(Nil)
+    Error(message) -> Error(message)
+  }
 }

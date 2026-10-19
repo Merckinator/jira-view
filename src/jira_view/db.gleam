@@ -5,18 +5,21 @@
 import envoy
 import gleam/dict
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/set
 import gleam/string
-import shared/types.{type Issue, Issue, Status, User}
+import shared/types.{type Issue, type ViewDef, Issue, Jql, Status, User, ViewDef}
 import sqlight
 
 pub type DbError {
   /// Filesystem/sqlite failure while opening or querying, debug-rendered.
   Sqlite(String)
+  /// A view id does not exist.
+  NotFound
 }
 
 /// Where the cache lives. `JIRA_VIEW_DB` overrides; the default is the
@@ -63,10 +66,63 @@ CREATE TABLE IF NOT EXISTS views (
 );
 "
 
-/// Create all tables. Idempotent, so it is safe on every boot and request.
+/// Schema evolution: board-backed views (Phase 5). SQLite's ALTER TABLE
+/// errors when the column already exists; any failure here is swallowed —
+/// duplicate column is the only known failure mode.
+const board_column_migration = "ALTER TABLE views ADD COLUMN board_id INTEGER"
+
+/// The seeding of a genuinely fresh database: exactly one view so the app
+/// is usable (and addressable as /jira/views/…) before the user edits it.
+const seed_view_id = "my-issues"
+const seed_view_name = "My issues"
+const seed_view_jql =
+  "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+
+/// Columns in the order they render; saved views may store any subset.
+pub fn default_columns() -> List(String) {
+  ["key", "summary", "status", "assignee", "updated"]
+}
+
+/// Create/evolve all tables + seed the default view. Idempotent, so it is
+/// safe on every boot and request.
 pub fn migrate(conn: sqlight.Connection) -> Result(Nil, DbError) {
-  sqlight.exec(schema, on: conn)
+  use _ <- result.try(
+    sqlight.exec(schema, on: conn)
+    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
+  )
+  // Phase 5 evolution; errors swallowed (duplicate column = already ran).
+  let _ = sqlight.exec(board_column_migration, on: conn)
+  case views_are_empty(conn) {
+    Error(error) -> Error(error)
+    Ok(False) -> Ok(Nil)
+    Ok(True) ->
+      seed_view(conn, ViewDef(
+        id: seed_view_id,
+        name: seed_view_name,
+        source: Jql(seed_view_jql),
+        columns: default_columns(),
+      ))
+  }
+}
+
+fn views_are_empty(conn: sqlight.Connection) -> Result(Bool, DbError) {
+  sqlight.query(
+    "SELECT COUNT(*) FROM views",
+    on: conn,
+    with: [],
+    expecting: count_decoder(),
+  )
+  |> result.map(fn(count) { list.first(count) == Ok(0) })
   |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+}
+
+/// Scalar COUNT(*) comes back as a one-row list of one integer column.
+fn count_decoder() -> decode.Decoder(Int) {
+  decode.field(0, decode.int, decode.success)
+}
+
+fn seed_view(conn: sqlight.Connection, view: ViewDef) -> Result(Nil, DbError) {
+  insert_view(conn, view.id, view)
 }
 
 /// Open + migrate at boot, so an unusable cache takes the server down early
@@ -230,4 +286,216 @@ pub fn merge_view_order(
   let rest =
     list.filter(issues, fn(issue) { !set.contains(saved_keys, issue.key) })
   list.append(ordered, rest)
+}
+
+// ————— saved views (Phase 5) —————
+
+/// All saved views in creation order.
+pub fn list_views(conn: sqlight.Connection) -> Result(List(ViewDef), DbError) {
+  sqlight.query(
+    "SELECT id, name, jql, board_id, columns_json FROM views ORDER BY rowid",
+    on: conn,
+    with: [],
+    expecting: view_row_decoder(),
+  )
+  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+}
+
+/// One saved view, or NotFound.
+pub fn get_view(
+  conn: sqlight.Connection,
+  view_id: String,
+) -> Result(ViewDef, DbError) {
+  sqlight.query(
+    "SELECT id, name, jql, board_id, columns_json FROM views WHERE id = ?",
+    on: conn,
+    with: [sqlight.text(view_id)],
+    expecting: view_row_decoder(),
+  )
+  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+  |> result.try(fn(views) {
+    case views {
+      [view] -> Ok(view)
+      _ -> Error(NotFound)
+    }
+  })
+}
+
+fn view_row_decoder() -> decode.Decoder(ViewDef) {
+  use id <- decode.field(0, decode.string)
+  use name <- decode.field(1, decode.string)
+  use jql <- decode.field(2, decode.optional(decode.string))
+  use board_id <- decode.field(3, decode.optional(decode.int))
+  use columns_json <- decode.field(4, decode.string)
+  let source = case jql {
+    Some(jql) -> Jql(jql)
+    None ->
+      types.Board(case board_id {
+        Some(id) -> id
+        None -> 0
+      })
+  }
+  let columns =
+    json.parse(columns_json, decode.list(decode.string))
+    |> result.unwrap(default_columns())
+  decode.success(types.ViewDef(id:, name:, source:, columns:))
+}
+
+fn insert_view(
+  conn: sqlight.Connection,
+  view_id: String,
+  view: ViewDef,
+) -> Result(Nil, DbError) {
+  sqlight.query(
+    "INSERT INTO views (id, name, jql, board_id, columns_json) VALUES (?, ?, ?, ?, ?)",
+    on: conn,
+    with: view_params(Some(view_id), view),
+    expecting: decode.dynamic,
+  )
+  |> result.map(fn(_) { Nil })
+  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+}
+
+/// Insert a view whose id must be unique (the caller slugs/guards it).
+pub fn create_view(conn: sqlight.Connection, view: ViewDef) -> Result(Nil, DbError) {
+  insert_view(conn, view.id, view)
+}
+
+/// Replace name/source/columns of an existing view.
+pub fn update_view(
+  conn: sqlight.Connection,
+  view_id: String,
+  view: ViewDef,
+) -> Result(Nil, DbError) {
+  sqlight.query(
+    "UPDATE views SET name = ?, jql = ?, board_id = ?, columns_json = ? WHERE id = ?",
+    on: conn,
+    with: list.append(view_params(None, view), [sqlight.text(view_id)]),
+    expecting: decode.dynamic,
+  )
+  |> result.map(fn(_) { Nil })
+  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+}
+
+fn view_params(
+  explicit_id: Option(String),
+  view: ViewDef,
+) -> List(sqlight.Value) {
+  let #(jql, board_id) = case view.source {
+    Jql(jql) -> #(Some(jql), None)
+    types.Board(board_id) -> #(None, Some(board_id))
+  }
+  let columns = json.to_string(json.array(view.columns, json.string))
+  let id = case explicit_id {
+    Some(id) -> [sqlight.text(id)]
+    None -> []
+  }
+  list.flatten([
+    id,
+    [sqlight.text(view.name)],
+    [sqlight.nullable(sqlight.text, jql)],
+    [sqlight.nullable(sqlight.int, board_id)],
+    [sqlight.text(columns)],
+  ])
+}
+
+/// Delete a view and its private ordering rows (ordering state must not
+/// outlive its view).
+pub fn delete_view(
+  conn: sqlight.Connection,
+  view_id: String,
+) -> Result(Nil, DbError) {
+  use _ <- result.try(
+    sqlight.query(
+      "DELETE FROM views WHERE id = ?",
+      on: conn,
+      with: [sqlight.text(view_id)],
+      expecting: decode.dynamic,
+    )
+    |> result.map(fn(_) { Nil })
+    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
+  )
+  sqlight.query(
+    "DELETE FROM view_issues WHERE view_id = ?",
+    on: conn,
+    with: [sqlight.text(view_id)],
+    expecting: decode.dynamic,
+  )
+  |> result.map(fn(_) { Nil })
+  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+}
+
+/// Slug a view name into a reusable id ("Q3 Sprint!" -> "q3-sprint"),
+/// then make it unique against existing views ("q3-sprint-2").
+pub fn unique_view_id(conn: sqlight.Connection, name: String) -> String {
+  let base = case slug(name) {
+    "" -> "view"
+    slug -> slug
+  }
+  case get_view(conn, base) {
+    Error(_) -> base
+    Ok(_) -> take_free_suffix(conn, base, 2)
+  }
+}
+
+fn take_free_suffix(
+  conn: sqlight.Connection,
+  base: String,
+  suffix: Int,
+) -> String {
+  let candidate = base <> "-" <> int.to_string(suffix)
+  case get_view(conn, candidate) {
+    Error(_) -> candidate
+    Ok(_) -> take_free_suffix(conn, base, suffix + 1)
+  }
+}
+
+fn slug(name: String) -> String {
+  name
+  |> string.lowercase
+  |> string.trim
+  |> string.to_graphemes
+  |> list.map(fn(grapheme) {
+    case is_slug_char(grapheme) {
+      True -> grapheme
+      False -> "-"
+    }
+  })
+  |> string.concat
+  |> collapse_dashes
+  |> drop_leading_dashes
+  |> drop_trailing_dashes
+}
+
+/// ASCII lowercase letters and digits only — view ids double as URL
+/// segments and database keys.
+fn is_slug_char(grapheme: String) -> Bool {
+  case string.to_utf_codepoints(grapheme) {
+    [codepoint] -> {
+      let code = string.utf_codepoint_to_int(codepoint)
+      { code >= 48 && code <= 57 } || { code >= 97 && code <= 122 }
+    }
+    _ -> False
+  }
+}
+
+fn collapse_dashes(text: String) -> String {
+  case string.contains(text, "--") {
+    True -> collapse_dashes(string.replace(text, "--", "-"))
+    False -> text
+  }
+}
+
+fn drop_leading_dashes(text: String) -> String {
+  case string.starts_with(text, "-") {
+    True -> drop_leading_dashes(string.drop_start(text, 1))
+    False -> text
+  }
+}
+
+fn drop_trailing_dashes(text: String) -> String {
+  case string.ends_with(text, "-") {
+    True -> drop_trailing_dashes(string.drop_end(text, 1))
+    False -> text
+  }
 }

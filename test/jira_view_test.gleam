@@ -1,6 +1,8 @@
 import envoy
+import gleam/dynamic/decode
 import gleam/http
 import gleam/json
+import gleam/list
 import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
@@ -441,6 +443,7 @@ pub fn issue_detail_decoder_with_embeds_test() {
         body: [],
       ),
     ],
+    attachments: [],
   )))
 }
 
@@ -555,4 +558,325 @@ pub fn write_routes_bad_body_test() {
     simulate.request(http.Post, "/jira/issue/KAN-1/worklog")
     |> simulate.json_body(json.object([#("x", json.string(""))]))
   web.handle_request(bad_worklog).status |> should.equal(400)
+}
+
+// Phase 5: views seeding + CRUD
+
+pub fn db_views_seeded_on_fresh_db_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let assert Ok(conn) = db.open()
+  let assert Ok(_) = db.migrate(conn)
+
+  db.list_views(conn)
+  |> should.be_ok
+  |> should.equal([
+    types.ViewDef(
+      id: "my-issues",
+      name: "My issues",
+      source: types.Jql(
+        "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
+      ),
+      columns: db.default_columns(),
+    ),
+  ])
+
+  // second migrate (the per-request pattern) must not re-seed
+  let assert Ok(_) = db.migrate(conn)
+  db.list_views(conn)
+  |> should.be_ok
+  |> list.length
+  |> should.equal(1)
+}
+
+pub fn db_view_crud_round_trip_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let assert Ok(conn) = db.open()
+  let assert Ok(_) = db.migrate(conn)
+
+  let view =
+    types.ViewDef(
+      id: "q3-sprint",
+      name: "Q3 Sprint",
+      source: types.Board(12),
+      columns: ["key", "summary", "status"],
+    )
+  db.create_view(conn, view) |> should.be_ok
+  db.get_view(conn, "q3-sprint") |> should.equal(Ok(view))
+
+  // update keeps id + ordering, replaces the rest (board -> jql here)
+  let updated =
+    types.ViewDef(
+      id: "q3-sprint",
+      name: "Q3 Sprint (renamed)",
+      source: types.Jql("project = SAM1"),
+      columns: ["key", "summary", "assignee"],
+    )
+  db.update_view(conn, "q3-sprint", updated) |> should.be_ok
+  db.get_view(conn, "q3-sprint") |> should.equal(Ok(updated))
+
+  db.get_view(conn, "missing") |> should.equal(Error(db.NotFound))
+
+  // deletion cascades to the private ordering rows
+  let assert Ok(_) =
+    db.save_view_order(conn, "q3-sprint", ["KAN-2", "KAN-1"])
+  db.delete_view(conn, "q3-sprint") |> should.be_ok
+  db.get_view(conn, "q3-sprint") |> should.equal(Error(db.NotFound))
+  db.load_view_order(conn, "q3-sprint")
+  |> should.be_ok
+  |> should.equal([])
+}
+
+pub fn unique_view_id_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let assert Ok(conn) = db.open()
+  let assert Ok(_) = db.migrate(conn)
+
+  db.unique_view_id(conn, "Q3 Sprint!")
+  |> should.equal("q3-sprint")
+  // names that slug to nothing fall back to "view"
+  db.unique_view_id(conn, "///")
+  |> should.equal("view")
+
+  let assert Ok(_) =
+    db.create_view(conn, types.ViewDef(
+      id: "q3-sprint",
+      name: "Q3 Sprint",
+      source: types.Board(1),
+      columns: db.default_columns(),
+    ))
+  db.unique_view_id(conn, "Q3 Sprint?")
+  |> should.equal("q3-sprint-2")
+
+  let assert Ok(_) =
+    db.create_view(conn, types.ViewDef(
+      id: "q3-sprint-2",
+      name: "Q3 Sprint2",
+      source: types.Board(2),
+      columns: db.default_columns(),
+    ))
+  db.unique_view_id(conn, "Q3 Sprint")
+  |> should.equal("q3-sprint-3")
+}
+
+// Phase 5: agile + attachment decoders
+
+pub fn boards_page_decoder_test() {
+  json.parse(
+    "{\"maxResults\":50,\"startAt\":0,\"total\":2,\"values\":[{\"id\":1,\"name\":\"SAM board\",\"type\":\"scrum\",\"location\":{}},{\"id\":2,\"name\":\"KAN board\",\"type\":\"kanban\"}]}",
+    types.boards_page_decoder(),
+  )
+  |> should.equal(Ok(#(
+    [
+      types.AgileBoard(1, "SAM board", "scrum"),
+      types.AgileBoard(2, "KAN board", "kanban"),
+    ],
+    2,
+  )))
+}
+
+pub fn agile_page_decoder_test() {
+  json.parse(
+    "{\"startAt\":0,\"maxResults\":100,\"total\":1,\"issues\":[{\"id\":\"10011\",\"key\":\"KAN-2\",\"fields\":{\"summary\":\"Task 2\",\"status\":{\"name\":\"In Progress\",\"statusCategory\":{\"key\":\"indeterminate\"}},\"updated\":\"2026-10-18\"}}]}",
+    types.agile_page_decoder(),
+  )
+  |> should.equal(Ok(#(
+    [
+      types.Issue(
+        key: "KAN-2",
+        id: "10011",
+        summary: "Task 2",
+        status: types.Status("In Progress", "indeterminate"),
+        assignee: None,
+        updated: "2026-10-18",
+      ),
+    ],
+    1,
+  )))
+}
+
+pub fn attachment_decoder_test() {
+  json.parse(
+    "{\"id\":\"10001\",\"filename\":\"screenshot.png\",\"mimeType\":\"image/png\",\"size\":2048,\"created\":\"2026\",\"content\":\"https://x\"}",
+    types.attachment_decoder(),
+  )
+  |> should.equal(Ok(types.Attachment(
+    id: "10001",
+    filename: "screenshot.png",
+    mime_type: "image/png",
+    size: 2048,
+  )))
+}
+
+pub fn view_json_round_trip_test() {
+  let view =
+    types.ViewDef(
+      id: "board-1",
+      name: "Board 1",
+      source: types.Board(42),
+      columns: ["key", "summary"],
+    )
+  json.parse(json.to_string(types.view_to_json(view)), types.app_view_decoder())
+  |> should.equal(Ok(view))
+
+  let jql_view =
+    types.ViewDef(
+      id: "v",
+      name: "V",
+      source: types.Jql("project = SAM1"),
+      columns: db.default_columns(),
+    )
+  json.parse(
+    json.to_string(types.view_to_json(jql_view)),
+    types.app_view_decoder(),
+  )
+  |> should.equal(Ok(jql_view))
+}
+
+// Phase 5: view routes
+
+/// The routes share one file-backed db (a `:memory:` db is per-connection),
+/// which also persists across test RUNS — so assertions are tolerant of
+/// leftovers and every creating test cleans up after itself.
+pub fn views_list_seeded_route_test() {
+  envoy.set("JIRA_VIEW_DB", "views-route-test.db")
+  let resp = web.handle_request(simulate.request(http.Get, "/jira/views"))
+  resp.status |> should.equal(200)
+
+  let assert Ok(views) =
+    simulate.read_body(resp)
+    |> json.parse(
+      decode.field("views", decode.list(types.app_view_decoder()), decode.success),
+    )
+  // the seeded default view always exists
+  list.any(views, fn(view) { view.id == "my-issues" })
+  |> should.be_true
+}
+
+pub fn view_create_update_delete_route_test() {
+  envoy.set("JIRA_VIEW_DB", "views-route-test.db")
+
+  // tolerate leftovers from earlier runs: recreate the same slug cleanly
+  let _ =
+    web.handle_request(simulate.request(http.Delete, "/jira/views/sprint-view"))
+
+  // create: unique slug id is assigned server-side
+  let created =
+    web.handle_request(
+      simulate.request(http.Post, "/jira/views")
+      |> simulate.json_body(
+        json.object([
+          #("name", json.string("Sprint view")),
+          #("board_id", json.int(1)),
+        ]),
+      ),
+    )
+  created.status |> should.equal(201)
+  let assert Ok(view) =
+    simulate.read_body(created) |> json.parse(types.app_view_decoder())
+  view.name |> should.equal("Sprint view")
+  view.id |> should.equal("sprint-view")
+  view.source
+  |> should.equal(types.Board(1))
+
+  // update it
+  let put =
+    web.handle_request(
+      simulate.request(http.Put, "/jira/views/sprint-view")
+      |> simulate.json_body(
+        json.object([
+          #("name", json.string("Sprint view (done)")),
+          #("jql", json.string("project = SAM1")),
+          #("columns", json.array(["key", "summary"], json.string)),
+        ]),
+      ),
+    )
+  put.status |> should.equal(200)
+
+  // delete it; further deletes 404
+  let deleted =
+    web.handle_request(simulate.request(http.Delete, "/jira/views/sprint-view"))
+  deleted.status |> should.equal(200)
+  let deleted_again =
+    web.handle_request(simulate.request(http.Delete, "/jira/views/sprint-view"))
+  deleted_again.status |> should.equal(404)
+}
+
+pub fn view_create_rejects_bad_bodies_test() {
+  envoy.set("JIRA_VIEW_DB", "views-route-test.db")
+
+  let neither =
+    web.handle_request(
+      simulate.request(http.Post, "/jira/views")
+      |> simulate.json_body(
+        json.object([#("name", json.string("x"))]),
+      ),
+    )
+  neither.status |> should.equal(400)
+
+  let both =
+    web.handle_request(
+      simulate.request(http.Post, "/jira/views")
+      |> simulate.json_body(
+        json.object([
+          #("name", json.string("x")),
+          #("jql", json.string("project = X")),
+          #("board_id", json.int(1)),
+        ]),
+      ),
+    )
+  both.status |> should.equal(400)
+
+  let empty_name =
+    web.handle_request(
+      simulate.request(http.Post, "/jira/views")
+      |> simulate.json_body(
+        json.object([#("name", json.string("")), #("jql", json.string("x"))]),
+      ),
+    )
+  empty_name.status |> should.equal(400)
+}
+
+// Phase 5: board/avatar/attachment routes (unreachable-Jira happy 502s)
+
+pub fn boards_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let resp = web.handle_request(simulate.request(http.Get, "/jira/boards"))
+  resp.status |> should.equal(502)
+}
+
+pub fn board_issues_bad_board_id_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let request = simulate.request(http.Get, "/jira/board/notanumber/issues")
+  web.handle_request(request).status |> should.equal(400)
+}
+
+pub fn board_issues_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let request =
+    simulate.request(http.Get, "/jira/board/1/issues?view=my-issues")
+  web.handle_request(request).status |> should.equal(502)
+}
+
+pub fn attachment_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let resp =
+    web.handle_request(simulate.request(http.Get, "/jira/attachment/10001"))
+  resp.status |> should.equal(502)
+}
+
+pub fn avatar_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let resp =
+    web.handle_request(simulate.request(http.Get, "/jira/avatar/5a67cc62"))
+  resp.status |> should.equal(502)
 }

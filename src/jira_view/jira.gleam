@@ -8,6 +8,7 @@ import gleam/bit_array
 import gleam/http
 import gleam/http/request
 import gleam/httpc
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -40,8 +41,9 @@ pub fn issue_path(key: String) -> String {
 }
 
 /// The fields the detail panel renders (description arrives as ADF; the
-/// comment and worklog embeds drive the panel's lists).
-pub const issue_fields = "summary,description,status,assignee,updated,comment,worklog"
+/// comment, worklog and attachment embeds drive the panel's lists).
+pub const issue_fields =
+  "summary,description,status,assignee,updated,comment,worklog,attachment"
 
 /// Paths of the transitions metadata + POST endpoints of an issue.
 pub fn transitions_path(key: String) -> String {
@@ -56,6 +58,20 @@ pub fn comment_path(key: String) -> String {
 /// Path of the worklog POST endpoint of an issue.
 pub fn worklog_path(key: String) -> String {
   issue_path(key) <> "/worklog"
+}
+
+// ————— agile API (Phase 5 board views) —————
+
+pub const boards_path = "/rest/agile/1.0/board"
+
+pub fn board_issues_path(board_id: Int) -> String {
+  boards_path <> "/" <> int.to_string(board_id) <> "/issue"
+}
+
+/// Attachment content of an issue, byte-level (metadata lives in the issue
+/// detail payload).
+pub fn attachment_content_path(attachment_id: String) -> String {
+  "/rest/api/3/attachment/content/" <> attachment_id
 }
 
 /// Fetch and decode GET /rest/api/3/myself.
@@ -161,6 +177,153 @@ fn send_and_check(req: request.Request(String)) -> Result(String, JiraError) {
       case resp.status >= 200 && resp.status < 300 {
         True -> Ok(resp.body)
         False -> Error(Api(resp.status, resp.body))
+      }
+    Error(error) -> Error(Http(error))
+  }
+}
+
+// ————— agile API (Phase 5 board views) —————
+
+/// All boards (bulk: pages followed via startAt/total), app shape.
+pub fn boards(cfg: Config) -> Result(List(types.AgileBoard), JiraError) {
+  boards_pages(cfg, 0, [])
+}
+
+fn boards_pages(
+  cfg: Config,
+  start_at: Int,
+  acc: List(types.AgileBoard),
+) -> Result(List(types.AgileBoard), JiraError) {
+  use body <- result.try(get_with_query(cfg, boards_path, [
+    #("startAt", int.to_string(start_at)),
+    #("maxResults", "50"),
+  ]))
+  case json.parse(body, types.boards_page_decoder()) {
+    Error(error) -> Error(Decode(error))
+    Ok(#(boards, total)) -> {
+      let acc = list.append(acc, boards)
+      case start_at + list.length(boards) < total && boards != [] {
+        True -> boards_pages(cfg, start_at + list.length(boards), acc)
+        False -> Ok(acc)
+      }
+    }
+  }
+}
+
+/// ALL issues of one board, bulk: pages are followed until
+/// startAt+maxResults covers total (the agile API paginates by offset,
+/// unlike the platform search). Same issue shape as the platform search.
+/// Works for every board kind; this site's boards don't use sprints at
+/// all (the sprint endpoints answer 400 on them).
+pub fn board_issues(
+  cfg: Config,
+  board_id: Int,
+) -> Result(List(types.Issue), JiraError) {
+  board_issues_pages(cfg, board_id, 0, [])
+}
+
+fn board_issues_pages(
+  cfg: Config,
+  board_id: Int,
+  start_at: Int,
+  acc: List(types.Issue),
+) -> Result(List(types.Issue), JiraError) {
+  use body <- result.try(get_with_query(cfg, board_issues_path(board_id), [
+    #("startAt", int.to_string(start_at)),
+    #("maxResults", "100"),
+    #("fields", search_fields),
+  ]))
+  case json.parse(body, types.agile_page_decoder()) {
+    Error(error) -> Error(Decode(error))
+    Ok(#(issues, total)) -> {
+      let acc = list.append(acc, issues)
+      case start_at + list.length(issues) < total && issues != [] {
+        True ->
+          board_issues_pages(
+            cfg,
+            board_id,
+            start_at + list.length(issues),
+            acc,
+          )
+        False -> Ok(acc)
+      }
+    }
+  }
+}
+
+// ————— binary proxies (Phase 5) —————
+
+/// GET a Jira path as raw bytes; returns the body plus the response's
+/// content-type (Jira's attachment content endpoint sets it).
+pub fn get_bits(
+  cfg: Config,
+  path: String,
+) -> Result(#(BitArray, String), JiraError) {
+  use req <- result.try(
+    request.to(cfg.base_url <> path)
+    |> result.map_error(fn(_) { Api(0, "JIRA_BASE_URL could not be parsed") }),
+  )
+  req
+  |> request.prepend_header("authorization", basic_auth_header(cfg))
+  |> request.prepend_header("accept", "*/*")
+  |> request.set_body(<<>>)
+  |> send_bits_and_check
+}
+
+/// The 48x48 avatar of a user, by account id: Jira's
+/// /rest/api/3/user?accountId=…&expand=avatarUrls (auth) yields the CDN
+/// URL, which is public — fetched WITHOUT the auth header.
+pub fn avatar(
+  cfg: Config,
+  account_id: String,
+) -> Result(#(BitArray, String), JiraError) {
+  use body <- result.try(get_with_query(cfg, user_path, [
+    #("accountId", account_id),
+    #("expand", "avatarUrls"),
+  ]))
+  use url <- result.try(case json.parse(body, types.avatar_url_decoder()) {
+    Ok("") -> Error(Api(404, "user has no avatar"))
+    Ok(url) -> Ok(url)
+    Error(error) -> Error(Decode(error))
+  })
+  get_public_bits(url)
+}
+
+pub const user_path = "/rest/api/3/user"
+
+fn get_public_bits(
+  url: String,
+) -> Result(#(BitArray, String), JiraError) {
+  use req <- result.try(
+    request.to(url)
+    |> result.map_error(fn(_) { Api(0, "avatar URL could not be parsed") }),
+  )
+  req |> request.set_body(<<>>) |> send_bits_and_check
+}
+
+/// Send the request and map non-2xx responses into JiraError. Attachment
+/// content answers 303 with a signed CDN location, followed WITHOUT auth
+/// (one hop is enough for Jira Cloud media links).
+fn send_bits_and_check(
+  req: request.Request(BitArray),
+) -> Result(#(BitArray, String), JiraError) {
+  case httpc.send_bits(req) {
+    Ok(resp) ->
+      case resp.status {
+        status if status >= 200 && status < 300 ->
+          Ok(#(
+            resp.body,
+            case list.key_find(resp.headers, "content-type") {
+              Ok(content_type) -> content_type
+              Error(_) -> "application/octet-stream"
+            },
+          ))
+        status if status >= 300 && status < 400 ->
+          case list.key_find(resp.headers, "location") {
+            Ok(next_url) -> get_public_bits(next_url)
+            Error(_) -> Error(Api(status, "redirect without location"))
+          }
+        status -> Error(Api(status, "binary response"))
       }
     Error(error) -> Error(Http(error))
   }

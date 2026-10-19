@@ -215,10 +215,46 @@ CREATE TABLE views (
       ran on a throwaway issue `SAM1-11`, deleted afterwards.)
 
 ### Phase 5 — More views
-- [ ] Saved views CRUD (`views` table): jql + columns + ordering each
-- [ ] Sprint/board-style view via `/rest/agile/1.0` (bulk fetch, never
-      one request per card)
-- [ ] Avatars/attachments proxied through `/jira/*` with auth headers
+- [x] Saved views CRUD (`views` table): jql + columns + ordering each —
+      **done 2026-10-19:** `GET/POST /jira/views`, `PUT/DELETE /jira/views/:id`
+      (`request.method` dispatch on the collection routes; DELETE pre-checks
+      existence → 404 for absent ids). The database **seeds one default
+      "My issues" view** on first boot (schema evolution via swallowed
+      `ALTER TABLE … ADD COLUMN board_id` keeps old caches). Ids are unique
+      slugs of the name (`view`, `…-2`, …); columns are the UI-chosen subset
+      of the five known fields, stored as JSON. Each view's private ordering
+      is untouched by jql/columns edits and dropped with the view. The UI:
+      a view picker in the toolbar, Refresh per view (the JQL box runs the
+      edited query without saving it), and an edit panel (name, source,
+      JQL-or-board, column checkboxes, save/cancel/delete).
+      **Learned (load-bearing): Lustre resolves event handlers by stable DOM
+      paths — an `element.none()`-swapped branch inside a rendered panel
+      desynced the Board-toggle button's path and its clicks were silently
+      dropped; the whole editor now renders a static structure (disabled
+      inputs, always-present fields) instead of structural switches.**
+- [x] Sprint/board-style view via `/rest/agile/1.0` (bulk fetch, never
+      one request per card) — **done, with a data-driven simplification:**
+      this site's boards are `type: "simple"` — the sprint endpoints
+      answer **400 "The board does not support sprints"** on them, so board
+      views fetch the board's whole issue list via
+      `GET /rest/agile/1.0/board/:id/issue` (paginated by startAt/total,
+      exactly like the plan's bulk-fetch rule) and it works for every board
+      kind. Endpoint: `GET /jira/board/:id/issues?view=…` — same pipeline
+      as search: cache + `view=…` merged private ordering in the response.
+      Sprint-filtering as a refinement the day a sprint-using board exists.
+- [x] Avatars/attachments proxied through `/jira/*` with auth headers —
+      **done:** `GET /jira/avatar/:account_id` (avatarUrls lookup via the
+      auth'ed user endpoint, then the public CDN bytes fetched *without*
+      credentials, cache-control one day) and
+      `GET /jira/attachment/:id` (auth'ed content fetch; Jira answers
+      **303 → signed CDN URL**, followed without auth). The detail payload
+      gained the `attachment` embed; attachments render inline (images via
+      the proxy) or as same-origin download links. The browser never talks
+      to anything but localhost. **Verified live in-browser:** avatar
+      decoded (naturalWidth 80), attachment PNG decoded (naturalWidth 1),
+      board view switching, column edit, per-view drag save
+      (`PATCH /jira/views/sam-board/order`), view delete + cascade. (All
+      writes ran on a throwaway issue `SAM1-12`, deleted afterwards.)
 
 ### Phase 6 — Extras
 - [ ] Optional webhooks → live updates (only if desired; refresh-on-demand
