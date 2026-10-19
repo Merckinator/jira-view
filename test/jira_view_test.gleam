@@ -603,6 +603,8 @@ pub fn db_view_crud_round_trip_test() {
   db.get_view(conn, "q3-sprint") |> should.equal(Ok(updated))
 
   db.get_view(conn, "missing") |> should.equal(Error(db.NotFound))
+  db.update_view(conn, "missing", updated)
+  |> should.equal(Error(db.NotFound))
 
   // deletion cascades to the private ordering rows
   let assert Ok(_) =
@@ -822,6 +824,33 @@ pub fn view_create_rejects_bad_bodies_test() {
       ),
     )
   empty_name.status |> should.equal(400)
+}
+
+pub fn view_update_missing_route_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let resp =
+    web.handle_request(
+      local_request(http.Put, "/jira/views/nope")
+      |> simulate.json_body(
+        json.object([
+          #("name", json.string("Nope")),
+          #("jql", json.string("project = X")),
+        ]),
+      ),
+    )
+  resp.status |> should.equal(404)
+}
+
+pub fn order_patch_missing_view_route_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let resp =
+    web.handle_request(
+      local_request(http.Patch, "/jira/views/nope/order")
+      |> simulate.json_body(
+        json.object([#("keys", json.array(["KAN-1"], json.string))]),
+      ),
+    )
+  resp.status |> should.equal(404)
 }
 
 // Phase 5: board/avatar/attachment routes (unreachable-Jira happy 502s)

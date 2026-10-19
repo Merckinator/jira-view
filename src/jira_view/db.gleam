@@ -317,19 +317,39 @@ pub fn create_view(conn: sqlight.Connection, view: ViewDef) -> Result(Nil, DbErr
   insert_view(conn, view.id, view)
 }
 
-/// Replace name/source/columns of an existing view.
+/// Replace name/source/columns of an existing view. Returns NotFound when the
+/// id does not exist (an UPDATE that matches no rows is not a success).
 pub fn update_view(
   conn: sqlight.Connection,
   view_id: String,
   view: ViewDef,
 ) -> Result(Nil, DbError) {
-  sqlight.query(
-    "UPDATE views SET name = ?, jql = ?, board_id = ?, columns_json = ? WHERE id = ?",
-    on: conn,
-    with: list.append(view_params(None, view), [sqlight.text(view_id)]),
-    expecting: decode.dynamic,
+  use _ <- result.try(
+    sqlight.query(
+      "UPDATE views SET name = ?, jql = ?, board_id = ?, columns_json = ? WHERE id = ?",
+      on: conn,
+      with: list.append(view_params(None, view), [sqlight.text(view_id)]),
+      expecting: decode.dynamic,
+    )
+    |> result.map(fn(_) { Nil })
+    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
   )
-  |> result.map(fn(_) { Nil })
+  use changed <- result.try(changed_rows(conn))
+  case changed {
+    0 -> Error(NotFound)
+    _ -> Ok(Nil)
+  }
+}
+
+/// Number of rows the last statement on this connection changed.
+fn changed_rows(conn: sqlight.Connection) -> Result(Int, DbError) {
+  sqlight.query(
+    "SELECT changes()",
+    on: conn,
+    with: [],
+    expecting: count_decoder(),
+  )
+  |> result.map(fn(counts) { list.first(counts) |> result.unwrap(0) })
   |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
 }
 

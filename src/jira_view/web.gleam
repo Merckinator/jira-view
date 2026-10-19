@@ -192,8 +192,7 @@ fn save_order(request: wisp.Request, view_id: String) -> wisp.Response {
           ])
           |> json.to_string
           |> wisp.json_response(200)
-        Error(error) ->
-          json_error("order_write_failed", string.inspect(error), 500)
+        Error(error) -> db_error_response(error, "order_write_failed")
       }
     Error(message) -> json_error("bad_request", message, 400)
   }
@@ -219,6 +218,7 @@ fn order_body_decoder() -> decode.Decoder(List(String)) {
 fn store_order(view_id: String, keys: List(String)) -> Result(Int, db.DbError) {
   use conn <- result.try(db.open())
   use _ <- result.try(db.migrate(conn))
+  use _ <- result.try(db.get_view(conn, view_id))
   use _ <- result.try(db.save_view_order(conn, view_id, keys))
   Ok(list.length(keys))
 }

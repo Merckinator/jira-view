@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **7 / 19 decided, 7 / 19 repo changes done** (finding 1 still needs a
+Progress: **8 / 19 decided, 8 / 19 repo changes done** (finding 1 still needs a
 manual token rotation at Atlassian).
 
 ---
@@ -147,7 +147,7 @@ manual token rotation at Atlassian).
     Jira fresh (as before); `PLAN.md` DoD #5 ("everything reads through the
     cache") is superseded. Two cache tests removed: `gleam test` now 48 passed.
 
-- [ ] **8. Updating a missing view returns 200**
+- [x] **8. Updating a missing view returns 200**
   - **Files:** `src/jira_view/web.gleam:467-487`, `src/jira_view/db.gleam:365-378`
   - **What:** `UPDATE views ... WHERE id = ?` succeeds when zero rows match, and
     the handler returns the view JSON as if it existed. The order PATCH also
@@ -158,7 +158,10 @@ manual token rotation at Atlassian).
     404; do the same in `store_order`.
   - **If skipped:** Silent no-op writes; orphan order rows can attach to a
     future view with the same slug.
-  - **Decision:** _pending_
+  - **Decision:** 404 on missing views. `db.update_view` now checks `changes()`
+    and returns `NotFound` on zero rows; `store_order` checks `get_view` before
+    saving. Added a db assertion plus PUT/PATCH route tests. `gleam test`:
+    50 passed.
 
 - [ ] **9. Every transition gets resolution "Done"**
   - **Files:** `src/jira_view/web.gleam:285-306`
