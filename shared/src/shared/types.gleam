@@ -1,7 +1,7 @@
 //// Shared Jira types, JSON decoders and encoders.
 ////
 //// The "shared code" of the two-target split: on the Erlang target it powers
-//// the backend cache/proxy, on the JS target the Lustre frontend. Keep it
+//// the backend proxy, on the JS target the Lustre frontend. Keep it
 //// pure: only gleam_stdlib and gleam_json imports, no target-specific code.
 
 import gleam/dynamic/decode
@@ -207,7 +207,7 @@ pub fn issues_response_decoder() -> decode.Decoder(List(Issue)) {
 
 // The backend's /jira/search re-encodes decoded issues with issue_to_json:
 // snake_case, no "fields" wrapper, status{name, category}. The frontend
-// (and future cache readers) decode that shape with the decoders below.
+// decodes that shape with the decoders below.
 
 fn app_status_decoder() -> decode.Decoder(Status) {
   use name <- decode.field("name", decode.string)

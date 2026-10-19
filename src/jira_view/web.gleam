@@ -1,7 +1,6 @@
 //// Web router: Wisp handlers. Serves the auth-proving endpoint, the
-//// paginated Jira search proxy (which writes every fetch into the SQLite
-//// cache and returns the view's merged ordering), the issue-detail
-//// passthrough, the transitions/transition/comment/worklog write
+//// paginated Jira search proxy (returned in the view's merged ordering), the
+//// issue-detail passthrough, the transitions/transition/comment/worklog write
 //// endpoints, the private per-view ordering endpoint, and the built
 //// frontend bundle.
 
@@ -10,6 +9,7 @@ import gleam/dynamic/decode
 import gleam/http
 import gleam/http/request.{get_header, path_segments}
 import gleam/int
+import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -113,11 +113,10 @@ fn me() -> wisp.Response {
 }
 
 /// Search proxy: GET /jira/search?jql=... follows every search page from
-/// Jira, writes the issues into the cache, and returns the list in the
-/// view's merged order — rows the view has privately ordered keep that
-/// order, anything new is appended (see db.merge_view_order). The `view`
-/// query parameter names the view; until Phase 5's saved views there is
-/// exactly one: "my-issues".
+/// Jira and returns the list in the view's merged order — rows the view has
+/// privately ordered keep that order, anything new is appended (see
+/// db.merge_view_order). The `view` query parameter names the view; until
+/// Phase 5's saved views there is exactly one: "my-issues".
 fn search(request: wisp.Request) -> wisp.Response {
   case list.key_find(wisp.get_query(request), "jql") {
     Error(_) ->
@@ -131,17 +130,14 @@ fn search(request: wisp.Request) -> wisp.Response {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
           case jira.search(cfg, jql) {
-            Ok(issues) ->
-              case cache_and_merge(issues, view_id) {
-                Ok(ordered) ->
-                  json.object([
-                    #("issues", json.array(ordered, types.issue_to_json)),
-                  ])
-                  |> json.to_string
-                  |> wisp.json_response(200)
-                Error(error) ->
-                  json_error("cache_write_failed", string.inspect(error), 500)
-              }
+            Ok(issues) -> {
+              let ordered = merge_with_saved_order(issues, view_id)
+              json.object([
+                #("issues", json.array(ordered, types.issue_to_json)),
+              ])
+              |> json.to_string
+              |> wisp.json_response(200)
+            }
             Error(error) -> jira_error_response(error)
           }
       }
@@ -151,17 +147,25 @@ fn search(request: wisp.Request) -> wisp.Response {
 
 const default_view_id = "my-issues"
 
-/// Fetches own the connection: open, migrate, upsert the fresh issues, then
-/// read the view's private ordering and merge it over the fetched order.
-fn cache_and_merge(
+/// Read the view's private ordering and merge it over Jira's order. A db
+/// failure must not hide issues Jira just returned: fall back to Jira's order
+/// and log the problem. Saving an order will surface the error separately.
+fn merge_with_saved_order(
   issues: List(types.Issue),
   view_id: String,
-) -> Result(List(types.Issue), db.DbError) {
-  use conn <- result.try(db.open())
-  use _ <- result.try(db.migrate(conn))
-  use _ <- result.try(db.upsert_issues(conn, issues))
-  use saved <- result.try(db.load_view_order(conn, view_id))
-  Ok(db.merge_view_order(saved, issues))
+) -> List(types.Issue) {
+  let saved = {
+    use conn <- result.try(db.open())
+    use _ <- result.try(db.migrate(conn))
+    db.load_view_order(conn, view_id)
+  }
+  case saved {
+    Ok(saved) -> db.merge_view_order(saved, issues)
+    Error(error) -> {
+      io.println("jira-view: saved order unavailable: " <> string.inspect(error))
+      issues
+    }
+  }
 }
 
 /// PATCH /jira/views/:view/order — persist the private ordering the browser
@@ -433,10 +437,10 @@ fn with_views(
   next: fn(sqlight.Connection) -> wisp.Response,
 ) -> wisp.Response {
   case db.open() {
-    Error(error) -> json_error("cache_unavailable", string.inspect(error), 500)
+    Error(error) -> json_error("database_unavailable", string.inspect(error), 500)
     Ok(conn) ->
       case db.migrate(conn) {
-        Error(error) -> json_error("cache_unavailable", string.inspect(error), 500)
+        Error(error) -> json_error("database_unavailable", string.inspect(error), 500)
         Ok(_) -> next(conn)
       }
   }
@@ -445,7 +449,7 @@ fn with_views(
 fn db_error_response(error: db.DbError, kind: String) -> wisp.Response {
   case error {
     db.NotFound -> json_error(kind, "no such view", 404)
-    other -> json_error("cache_write_failed", string.inspect(other), 500)
+    other -> json_error("database_write_failed", string.inspect(other), 500)
   }
 }
 
@@ -460,7 +464,7 @@ fn list_views() -> wisp.Response {
         ])
         |> json.to_string
         |> wisp.json_response(200)
-      Error(error) -> json_error("cache_read_failed", string.inspect(error), 500)
+      Error(error) -> json_error("database_read_failed", string.inspect(error), 500)
     }
   })
 }
@@ -609,9 +613,9 @@ fn boards() -> wisp.Response {
   }
 }
 
-/// GET /jira/board/:id/issues?view=… — the board's issues, bulk-fetched,
-/// cached, and returned in the referring view's merged ordering — same
-/// pipeline and response shape as /jira/search.
+/// GET /jira/board/:id/issues?view=… — the board's issues, bulk-fetched and
+/// returned in the referring view's merged ordering — same pipeline and
+/// response shape as /jira/search.
 fn board_issues(request: wisp.Request, board_id: String) -> wisp.Response {
   case int.parse(board_id) {
     Error(_) ->
@@ -625,17 +629,14 @@ fn board_issues(request: wisp.Request, board_id: String) -> wisp.Response {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
           case jira.board_issues(cfg, board_id) {
-            Ok(issues) ->
-              case cache_and_merge(issues, view_id) {
-                Ok(ordered) ->
-                  json.object([
-                    #("issues", json.array(ordered, types.issue_to_json)),
-                  ])
-                  |> json.to_string
-                  |> wisp.json_response(200)
-                Error(error) ->
-                  json_error("cache_write_failed", string.inspect(error), 500)
-              }
+            Ok(issues) -> {
+              let ordered = merge_with_saved_order(issues, view_id)
+              json.object([
+                #("issues", json.array(ordered, types.issue_to_json)),
+              ])
+              |> json.to_string
+              |> wisp.json_response(200)
+            }
             Error(error) -> jira_error_response(error)
           }
       }
@@ -683,8 +684,8 @@ fn attachment(attachment_id: String) -> wisp.Response {
 /// Issue detail data for the UI panel: fetch
 /// GET /rest/api/3/issue/:key?fields=... and pass the raw JSON through —
 /// the browser decodes it with the shared issue_detail decoder.
-/// shortcut: detail is fetched fresh on every open, not cached; add a
-/// description column to the cache when cached-only detail reads matter.
+/// shortcut: detail is fetched fresh on every open; add a local detail cache
+/// if offline detail reads ever matter.
 fn issue(key: String) -> wisp.Response {
   case config.load() {
     Error(message) -> json_error("configuration_incomplete", message, 503)

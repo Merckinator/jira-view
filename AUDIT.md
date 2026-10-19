@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **5 / 19 decided, 5 / 19 repo changes done** (finding 1 still needs a
+Progress: **7 / 19 decided, 7 / 19 repo changes done** (finding 1 still needs a
 manual token rotation at Atlassian).
 
 ---
@@ -114,7 +114,7 @@ manual token rotation at Atlassian).
 
 ## Should fix
 
-- [ ] **6. A cache error hides a successful Jira fetch**
+- [x] **6. A cache error hides a successful Jira fetch**
   - **Files:** `src/jira_view/web.gleam:111-141`
   - **What:** `search` and `board_issues` return `500 cache_write_failed` if
     opening, migrating or writing SQLite fails, even after Jira returned issues.
@@ -123,9 +123,12 @@ manual token rotation at Atlassian).
   - **Fix:** Make cache writing best-effort: log the failure, then return the
     fresh issues (Jira's order if the saved order cannot be read).
   - **If skipped:** The cache can take the whole view down.
-  - **Decision:** _pending_
+  - **Decision:** Resolved by deleting the write-only cache (finding 7).
+    `search` and `board_issues` no longer write issues. `merge_with_saved_order`
+    reads the saved order and, if the database fails, logs the problem and
+    returns Jira's order, so a db problem cannot hide fetched issues.
 
-- [ ] **7. The SQLite issue cache is write-only**
+- [x] **7. The SQLite issue cache is write-only**
   - **Files:** `src/jira_view/db.gleam:138-208`; `load_issues` is used only by
     tests
   - **What:** Every search upserts full issues and `fields_json`, but no
@@ -138,7 +141,11 @@ manual token rotation at Atlassian).
     the write call. Pick one.
   - **If skipped:** Wasted writes now, and a cache that can drift stale before
     it is ever used.
-  - **Decision:** _pending_
+  - **Decision:** Deleted. Removed the `issues` table, `upsert_issues`,
+    `load_issues`, `upsert_issue`, `issue_row_decoder` and their tests;
+    `ensure_schema` drops the old table once at boot. View loads still fetch
+    Jira fresh (as before); `PLAN.md` DoD #5 ("everything reads through the
+    cache") is superseded. Two cache tests removed: `gleam test` now 48 passed.
 
 - [ ] **8. Updating a missing view returns 200**
   - **Files:** `src/jira_view/web.gleam:467-487`, `src/jira_view/db.gleam:365-378`

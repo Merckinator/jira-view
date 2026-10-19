@@ -142,9 +142,9 @@ pub fn search_page_query_test() {
   ])
 }
 
-// cache: schema + upsert + load round trip on an in-memory db
+// test issues for the private-ordering merge
 
-fn cached_issue(
+fn sample_issue(
   key: String,
   summary: String,
   assignee_name: String,
@@ -162,77 +162,20 @@ fn cached_issue(
   )
 }
 
-pub fn db_upsert_load_round_trip_test() {
-  envoy.set("JIRA_VIEW_DB", ":memory:")
-  let assert Ok(conn) = db.open()
-  let assert Ok(_) = db.migrate(conn)
-
-  db.upsert_issues(conn, [
-    cached_issue("KAN-3", "Subtask 2.1", ""),
-    cached_issue("KAN-1", "Create a demo project", "Jeff"),
-  ])
-  |> should.be_ok
-
-  let assert Ok(loaded) = db.load_issues(conn)
-  // insertion order preserved; rows come back without status category and
-  // assignee avatar (those columns only exist for future detail rendering)
-  loaded
-  |> should.equal([
-    types.Issue(
-      key: "KAN-3",
-      id: "10012",
-      summary: "Subtask 2.1",
-      status: types.Status("To Do", ""),
-      assignee: None,
-      updated: "2026-10-18T18:05:33.688-0400",
-    ),
-    types.Issue(
-      key: "KAN-1",
-      id: "10012",
-      summary: "Create a demo project",
-      status: types.Status("To Do", ""),
-      assignee: Some(types.User("", "Jeff", "")),
-      updated: "2026-10-18T18:05:33.688-0400",
-    ),
-  ])
-}
-
-pub fn db_upsert_replaces_existing_keys_test() {
-  envoy.set("JIRA_VIEW_DB", ":memory:")
-  let assert Ok(conn) = db.open()
-  let assert Ok(_) = db.migrate(conn)
-
-  let assert Ok(_) = db.upsert_issues(conn, [cached_issue("KAN-3", "Old", "")])
-  let assert Ok(_) = db.upsert_issues(conn, [cached_issue("KAN-3", "New", "")])
-
-  let assert Ok(loaded) = db.load_issues(conn)
-  loaded
-  |> should.equal([
-    types.Issue(
-      key: "KAN-3",
-      id: "10012",
-      summary: "New",
-      status: types.Status("To Do", ""),
-      assignee: None,
-      updated: "2026-10-18T18:05:33.688-0400",
-    ),
-  ])
-}
-
 // private ordering: merge semantics (the contract the /jira/search view gives)
 
 pub fn merge_view_order_empty_test() {
   // No saved order yet: Jira's order passes through untouched.
-  db.merge_view_order([], [cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")])
-  |> should.equal([cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")])
+  db.merge_view_order([], [sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")])
+  |> should.equal([sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")])
 }
 
 pub fn merge_view_order_saved_order_wins_test() {
   db.merge_view_order(
     ["KAN-2", "KAN-1"],
-    [cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")],
+    [sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")],
   )
-  |> should.equal([cached_issue("KAN-2", "Two", ""), cached_issue("KAN-1", "One", "")])
+  |> should.equal([sample_issue("KAN-2", "Two", ""), sample_issue("KAN-1", "One", "")])
 }
 
 pub fn merge_view_order_appends_new_issues_test() {
@@ -241,15 +184,15 @@ pub fn merge_view_order_appends_new_issues_test() {
   db.merge_view_order(
     ["KAN-2", "KAN-1"],
     [
-      cached_issue("KAN-3", "New", ""),
-      cached_issue("KAN-1", "One", ""),
-      cached_issue("KAN-2", "Two", ""),
+      sample_issue("KAN-3", "New", ""),
+      sample_issue("KAN-1", "One", ""),
+      sample_issue("KAN-2", "Two", ""),
     ],
   )
   |> should.equal([
-    cached_issue("KAN-2", "Two", ""),
-    cached_issue("KAN-1", "One", ""),
-    cached_issue("KAN-3", "New", ""),
+    sample_issue("KAN-2", "Two", ""),
+    sample_issue("KAN-1", "One", ""),
+    sample_issue("KAN-3", "New", ""),
   ])
 }
 
@@ -259,11 +202,11 @@ pub fn merge_view_order_drops_stale_keys_test() {
   // save rewrites them.
   db.merge_view_order(
     ["KAN-9", "KAN-1"],
-    [cached_issue("KAN-1", "One", ""), cached_issue("KAN-2", "Two", "")],
+    [sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")],
   )
   |> should.equal([
-    cached_issue("KAN-1", "One", ""),
-    cached_issue("KAN-2", "Two", ""),
+    sample_issue("KAN-1", "One", ""),
+    sample_issue("KAN-2", "Two", ""),
   ])
 }
 
@@ -272,11 +215,11 @@ pub fn merge_view_order_keeps_fresh_values_test() {
   // (new summary/status) still show through the saved order.
   db.merge_view_order(
     ["KAN-1", "KAN-2"],
-    [cached_issue("KAN-1", "One (edited)", ""), cached_issue("KAN-2", "Two", "")],
+    [sample_issue("KAN-1", "One (edited)", ""), sample_issue("KAN-2", "Two", "")],
   )
   |> should.equal([
-    cached_issue("KAN-1", "One (edited)", ""),
-    cached_issue("KAN-2", "Two", ""),
+    sample_issue("KAN-1", "One (edited)", ""),
+    sample_issue("KAN-2", "Two", ""),
   ])
 }
 

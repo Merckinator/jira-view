@@ -2,8 +2,9 @@
 ////
 //// Starts a Wisp/Mist server on 127.0.0.1. Phase 0 proved Jira
 //// credentials via /api/me; Phase 1 adds the paginated Jira search proxy
-//// (/jira/search) that keeps a SQLite cache on disk. Configuration is
-//// read per request so the server always boots; see `.env.example`.
+//// (/jira/search); Phase 5 adds saved views and per-view ordering stored
+//// in SQLite. Configuration is read per request so the server always
+//// boots; see `.env.example`.
 
 import envoy
 import gleam/erlang/process
@@ -21,7 +22,7 @@ const default_port = 8787
 pub fn main() {
   wisp.configure_logger()
 
-  // Fail fast at boot if the cache is unusable.
+  // Fail fast at boot if the database is unusable.
   db.ensure_schema()
 
   let port = port()
