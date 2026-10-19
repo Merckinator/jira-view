@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **3 / 19 decided, 3 / 19 repo changes done** (finding 1 still needs a
+Progress: **4 / 19 decided, 4 / 19 repo changes done** (finding 1 still needs a
 manual token rotation at Atlassian).
 
 ---
@@ -73,7 +73,7 @@ manual token rotation at Atlassian).
     `db_deleting_all_views_does_not_reseed_test`; the fresh-DB seed test still
     passes. `gleam test`: 50 passed.
 
-- [ ] **4. A slow reply can make the next comment go to the wrong issue**
+- [x] **4. A slow reply can make the next comment go to the wrong issue**
   - **Files:** `ui/src/jira_view_ui.gleam:399-421`, `732-756`, `866-885`
   - **What:** `GotDetail` and `GotTransitions` carry no issue key; `GotIssues`
     carries no view id. The last reply wins.
@@ -86,7 +86,11 @@ manual token rotation at Atlassian).
     match the current selection/view. Add a test for out-of-order replies.
   - **If skipped:** Rare but real wrong-issue writes; the panel can silently
     show the wrong issue.
-  - **Decision:** _pending_
+  - **Decision:** Tag replies. `GotDetail`/`GotTransitions` now carry the issue
+    key and `GotIssues` carries the view id; `is_selected`/`is_current_view`
+    drop replies that no longer match. UI compiles for JavaScript. Test coverage
+    comes with finding 13. Remaining known gap: two requests for the same
+    issue/view can still race; a generation counter would close that if needed.
 
 - [ ] **5. Saving the order is not atomic**
   - **Files:** `src/jira_view/db.gleam:216-244`, `src/jira_view/web.gleam:146-192`

@@ -112,7 +112,7 @@ pub type Msg {
   GotBoards(Result(List(types.AgileBoard), String))
   SetJql(String)
   Refresh
-  GotIssues(Result(List(Issue), String))
+  GotIssues(view_id: String, result: Result(List(Issue), String))
   FocusDown
   FocusUp
   RowDown
@@ -121,9 +121,9 @@ pub type Msg {
   Dropped(from: Int, to: Int)
   OrderSaved(Result(Nil, String))
   Select(key: String)
-  GotDetail(Result(IssueDetail, String))
+  GotDetail(key: String, result: Result(IssueDetail, String))
   CloseDetail
-  GotTransitions(Result(List(types.Transition), String))
+  GotTransitions(key: String, result: Result(List(types.Transition), String))
   TransitionClicked(transition: types.Transition)
   GotTransition(key: String, to_status: String, result: Result(Nil, String))
   SetCommentDraft(String)
@@ -338,7 +338,9 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           case view.source {
             types.Jql(_) -> #(
               Model(..model, state: Loading),
-              fetch.get(search_url(view.id, model.jql_input), decode_issues),
+              fetch.get(search_url(view.id, model.jql_input), fn(response) {
+                decode_issues(view.id, response)
+              }),
             )
             types.Board(_) -> #(
               Model(..model, state: Loading),
@@ -347,15 +349,21 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           }
         None -> #(model, effect.none())
       }
-    GotIssues(Ok(issues)) -> #(
-      Model(..model, state: Ready(issues), cursor: None),
-      // (Re)attach drag-and-drop once the fresh tbody is in the DOM.
-      sortable.attach(".jv-tbody", Dropped),
-    )
-    GotIssues(Error(message)) -> #(
-      Model(..model, state: Failed(message)),
-      effect.none(),
-    )
+    GotIssues(view_id, Ok(issues)) ->
+      case is_current_view(model, view_id) {
+        True ->
+          #(
+            Model(..model, state: Ready(issues), cursor: None),
+            // (Re)attach drag-and-drop once the fresh tbody is in the DOM.
+            sortable.attach(".jv-tbody", Dropped),
+          )
+        False -> #(model, effect.none())
+      }
+    GotIssues(view_id, Error(message)) ->
+      case is_current_view(model, view_id) {
+        True -> #(Model(..model, state: Failed(message)), effect.none())
+        False -> #(model, effect.none())
+      }
 
     // — Phase 3: ordering —
     FocusDown -> #(
@@ -396,29 +404,49 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     // — Phases 2/4: detail + writes —
     Select(key) -> open_detail(model, key)
-    GotDetail(Ok(detail)) -> #(
-      Model(
-        ..model,
-        selected: Some(DetailLoaded(detail)),
-        // The fresh detail also refreshes the matching row (used after
-        // transition failures to undo the optimistic flip).
-        state: sync_ready_row(model.state, detail.issue),
-      ),
-      effect.none(),
-    )
-    GotDetail(Error(message)) -> #(
-      Model(..model, selected: Some(DetailFailed(message))),
-      effect.none(),
-    )
+    GotDetail(key, Ok(detail)) ->
+      case is_selected(model, key) {
+        True ->
+          #(
+            Model(
+              ..model,
+              selected: Some(DetailLoaded(detail)),
+              // The fresh detail also refreshes the matching row (used after
+              // transition failures to undo the optimistic flip).
+              state: sync_ready_row(model.state, detail.issue),
+            ),
+            effect.none(),
+          )
+        False -> #(model, effect.none())
+      }
+    GotDetail(key, Error(message)) ->
+      case is_selected(model, key) {
+        True ->
+          #(
+            Model(..model, selected: Some(DetailFailed(message))),
+            effect.none(),
+          )
+        False -> #(model, effect.none())
+      }
     CloseDetail -> #(Model(..model, selected: None), effect.none())
-    GotTransitions(Ok(transitions)) -> #(
-      Model(..model, transitions: Some(Ok(transitions))),
-      effect.none(),
-    )
-    GotTransitions(Error(message)) -> #(
-      Model(..model, transitions: Some(Error(message))),
-      effect.none(),
-    )
+    GotTransitions(key, Ok(transitions)) ->
+      case is_selected(model, key) {
+        True ->
+          #(
+            Model(..model, transitions: Some(Ok(transitions))),
+            effect.none(),
+          )
+        False -> #(model, effect.none())
+      }
+    GotTransitions(key, Error(message)) ->
+      case is_selected(model, key) {
+        True ->
+          #(
+            Model(..model, transitions: Some(Error(message))),
+            effect.none(),
+          )
+        False -> #(model, effect.none())
+      }
     TransitionClicked(transition) ->
       case selected_key(model) {
         Ok(key) -> #(
@@ -705,12 +733,14 @@ fn fetch_issues_effect(view: types.ViewDef) -> Effect(Msg) {
           <> int.to_string(board_id)
           <> "/issues?"
           <> uri.query_to_string([#("view", view.id)]),
-        decode_issues,
+        fn(response) { decode_issues(view.id, response) },
       )
     // JQL views: the SAVED query (switching views resets the box, but
     // loading a view fresh always uses its stored query).
     types.Jql(jql) ->
-      fetch.get(search_url(view.id, jql), decode_issues)
+      fetch.get(search_url(view.id, jql), fn(response) {
+        decode_issues(view.id, response)
+      })
   }
 }
 
@@ -718,14 +748,17 @@ fn search_url(view_id: String, jql: String) -> String {
   "/jira/search?" <> uri.query_to_string([#("jql", jql), #("view", view_id)])
 }
 
-fn decode_issues(response) -> Msg {
+fn decode_issues(
+  view_id: String,
+  response: Result(String, String),
+) -> Msg {
   case response {
     Ok(body) ->
       case json.parse(body, types.issues_response_decoder()) {
-        Ok(issues) -> GotIssues(Ok(issues))
-        Error(error) -> GotIssues(Error(string.inspect(error)))
+        Ok(issues) -> GotIssues(view_id, Ok(issues))
+        Error(error) -> GotIssues(view_id, Error(string.inspect(error)))
       }
-    Error(message) -> GotIssues(Error(message))
+    Error(message) -> GotIssues(view_id, Error(message))
   }
 }
 
@@ -752,6 +785,19 @@ fn selected_key(model: Model) -> Result(String, Nil) {
     Some(DetailLoaded(info)) -> Ok(info.issue.key)
     Some(DetailFailed(_)) -> Error(Nil)
     None -> Error(Nil)
+  }
+}
+
+/// Whether a reply belongs to the issue currently open in the panel.
+fn is_selected(model: Model, key: String) -> Bool {
+  selected_key(model) == Ok(key)
+}
+
+/// Whether a reply belongs to the view currently showing.
+fn is_current_view(model: Model, view_id: String) -> Bool {
+  case model.current_view {
+    Some(view) -> view.id == view_id
+    None -> False
   }
 }
 
@@ -855,10 +901,10 @@ fn fetch_detail(key: String) -> Effect(Msg) {
     case response {
       Ok(body) ->
         case json.parse(body, types.issue_detail_decoder()) {
-          Ok(detail) -> GotDetail(Ok(detail))
-          Error(error) -> GotDetail(Error(string.inspect(error)))
+          Ok(detail) -> GotDetail(key, Ok(detail))
+          Error(error) -> GotDetail(key, Error(string.inspect(error)))
         }
-      Error(message) -> GotDetail(Error(message))
+      Error(message) -> GotDetail(key, Error(message))
     }
   })
 }
@@ -868,10 +914,10 @@ fn fetch_transitions(key: String) -> Effect(Msg) {
     case response {
       Ok(body) ->
         case json.parse(body, types.jira_transitions_decoder()) {
-          Ok(transitions) -> GotTransitions(Ok(transitions))
-          Error(error) -> GotTransitions(Error(string.inspect(error)))
+          Ok(transitions) -> GotTransitions(key, Ok(transitions))
+          Error(error) -> GotTransitions(key, Error(string.inspect(error)))
         }
-      Error(message) -> GotTransitions(Error(message))
+      Error(message) -> GotTransitions(key, Error(message))
     }
   })
 }
