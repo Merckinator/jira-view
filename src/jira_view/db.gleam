@@ -83,19 +83,19 @@ pub fn default_columns() -> List(String) {
   ["key", "summary", "status", "assignee", "updated"]
 }
 
-/// Create/evolve all tables + seed the default view. Idempotent, so it is
-/// safe on every boot and request.
+/// Create/evolve all tables + seed the default view on a genuinely fresh
+/// database. Idempotent, so it is safe on every boot and request.
 pub fn migrate(conn: sqlight.Connection) -> Result(Nil, DbError) {
+  use views_table_existed <- result.try(views_table_exists(conn))
   use _ <- result.try(
     sqlight.exec(schema, on: conn)
     |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
   )
   // Phase 5 evolution; errors swallowed (duplicate column = already ran).
   let _ = sqlight.exec(board_column_migration, on: conn)
-  case views_are_empty(conn) {
-    Error(error) -> Error(error)
-    Ok(False) -> Ok(Nil)
-    Ok(True) ->
+  case views_table_existed {
+    True -> Ok(Nil)
+    False ->
       seed_view(conn, ViewDef(
         id: seed_view_id,
         name: seed_view_name,
@@ -105,14 +105,17 @@ pub fn migrate(conn: sqlight.Connection) -> Result(Nil, DbError) {
   }
 }
 
-fn views_are_empty(conn: sqlight.Connection) -> Result(Bool, DbError) {
+/// Whether the `views` table predates this migrate call. A fresh database gets
+/// the default view; an existing one stays exactly as the user left it, even
+/// if every view has been deleted.
+fn views_table_exists(conn: sqlight.Connection) -> Result(Bool, DbError) {
   sqlight.query(
-    "SELECT COUNT(*) FROM views",
+    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'views'",
     on: conn,
     with: [],
     expecting: count_decoder(),
   )
-  |> result.map(fn(count) { list.first(count) == Ok(0) })
+  |> result.map(fn(count) { list.first(count) == Ok(1) })
   |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
 }
 

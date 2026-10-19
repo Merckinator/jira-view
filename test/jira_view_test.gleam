@@ -606,6 +606,20 @@ pub fn db_views_seeded_on_fresh_db_test() {
   |> should.equal(1)
 }
 
+pub fn db_deleting_all_views_does_not_reseed_test() {
+  envoy.set("JIRA_VIEW_DB", ":memory:")
+  let assert Ok(conn) = db.open()
+  let assert Ok(_) = db.migrate(conn)
+
+  db.delete_view(conn, "my-issues") |> should.be_ok
+
+  // an existing database stays empty; only a first-time table gets the seed
+  let assert Ok(_) = db.migrate(conn)
+  db.list_views(conn)
+  |> should.be_ok
+  |> should.equal([])
+}
+
 pub fn db_view_crud_round_trip_test() {
   envoy.set("JIRA_VIEW_DB", ":memory:")
   let assert Ok(conn) = db.open()

@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **2 / 19 decided, 2 / 19 repo changes done** (finding 1 still needs a
+Progress: **3 / 19 decided, 3 / 19 repo changes done** (finding 1 still needs a
 manual token rotation at Atlassian).
 
 ---
@@ -57,7 +57,7 @@ manual token rotation at Atlassian).
     `127.0.0.1` → 200, `localhost` → 200, `evil.example` → 400. `gleam test`:
     49 passed.
 
-- [ ] **3. Deleting every view brings "My issues" back**
+- [x] **3. Deleting every view brings "My issues" back**
   - **Files:** `src/jira_view/db.gleam:88-117`, `src/jira_view/web.gleam:404-415`
   - **What:** Every request runs `migrate`, which seeds the default view
     whenever the `views` table is empty.
@@ -67,7 +67,11 @@ manual token rotation at Atlassian).
     (check `sqlite_master` before creating it, or store a `seeded` flag). Add a
     test: delete all, migrate, still empty.
   - **If skipped:** The user cannot keep an empty view list; delete is a lie.
-  - **Decision:** _pending_
+  - **Decision:** Seed on first creation. `migrate` now checks `sqlite_master`
+    for the `views` table before running the schema and seeds only when the
+    table is new; `views_are_empty` was removed. Added
+    `db_deleting_all_views_does_not_reseed_test`; the fresh-DB seed test still
+    passes. `gleam test`: 50 passed.
 
 - [ ] **4. A slow reply can make the next comment go to the wrong issue**
   - **Files:** `ui/src/jira_view_ui.gleam:399-421`, `732-756`, `866-885`
