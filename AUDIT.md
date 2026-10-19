@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **16 / 19 decided, 16 / 19 repo changes done** (finding 1 still needs
+Progress: **17 / 19 decided, 17 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -297,7 +297,7 @@ a manual token rotation at Atlassian).
 
 ## Nice to have
 
-- [ ] **17. Board views say "active sprint" but fetch every board issue**
+- [x] **17. Board views say "active sprint" but fetch every board issue**
   - **Files:** `ui/src/jira_view_ui.gleam:1163-1167`,
     `src/jira_view/jira.gleam:218-252`
   - **What:** The label says "board · active sprint"; `board_issues` calls the
@@ -307,7 +307,8 @@ a manual token rotation at Atlassian).
   - **Fix:** Change the label to "board · all issues", or filter by the active
     sprint if that is the intent.
   - **If skipped:** Users misread what the list contains.
-  - **Decision:** _pending_
+  - **Decision:** Renamed the label to "board · all issues" and the CSS class
+    to `jv-board-note`. Bundle rebuilt; UI tests 16 passed.
 
 - [ ] **18. Choosing Board before boards load silently does nothing**
   - **Files:** `ui/src/jira_view_ui.gleam:230-243`, `589-598`

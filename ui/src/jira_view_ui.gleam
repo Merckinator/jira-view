@@ -1305,8 +1305,8 @@ fn query_slot(model: Model, view: types.ViewDef) -> Element(Msg) {
         ])
     }
     types.Board(_) ->
-      html.span([attribute.class("jv-sprint-note")], [
-        text("board · active sprint"),
+      html.span([attribute.class("jv-board-note")], [
+        text("board · all issues"),
       ])
   }
 }
