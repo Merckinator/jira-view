@@ -23,6 +23,8 @@ pub type JiraError {
   Api(status: Int, body: String)
   /// The response body could not be decoded.
   Decode(json.DecodeError)
+  /// A single view returned more issues than the app will render.
+  TooMany(limit: Int)
 }
 
 /// The endpoint that proves credentials.
@@ -34,6 +36,14 @@ pub const search_path = "/rest/api/3/search/jql"
 /// The `fields` allowlist sent with search requests; anything not on it is
 /// not fetched. Add a field here + to types.Issue/decoders together.
 pub const search_fields = "summary,status,assignee,updated"
+
+/// Rows requested per page. Jira's default is 50; 100 halves the round trips
+/// without making a single response large.
+const page_size = "100"
+
+/// Hard cap for one view. The table is unusable beyond this, and it keeps a
+/// broad JQL from holding the request open for minutes.
+pub const max_issue_fetch = 2000
 
 /// Path of the issue detail endpoint for the detail view.
 pub fn issue_path(key: String) -> String {
@@ -88,19 +98,20 @@ pub fn myself(cfg: Config) -> Result(types.Me, JiraError) {
 
 /// Fetch every page of the search endpoint. Pages are followed via
 /// `nextPageToken` until it is absent (last page), so the result is the
-/// complete issue list in Jira's order.
+/// complete issue list in Jira's order, up to `max_issue_fetch`.
 pub fn search(
   cfg: Config,
   jql: String,
 ) -> Result(List(types.Issue), JiraError) {
-  search_pages(cfg, jql, None, [])
+  search_pages(cfg, jql, None, [], 0)
 }
 
 fn search_pages(
   cfg: Config,
   jql: String,
   token: option.Option(String),
-  acc: List(types.Issue),
+  acc: List(List(types.Issue)),
+  count: Int,
 ) -> Result(List(types.Issue), JiraError) {
   use body <- result.try(get_with_query(
     cfg,
@@ -110,22 +121,32 @@ fn search_pages(
   case json.parse(body, types.search_page_decoder()) {
     Error(error) -> Error(Decode(error))
     Ok(types.SearchPage(issues, next)) -> {
-      let acc = list.append(acc, issues)
-      case next {
-        Some(token) -> search_pages(cfg, jql, Some(token), acc)
-        None -> Ok(acc)
+      let count = count + list.length(issues)
+      case count > max_issue_fetch {
+        True -> Error(TooMany(max_issue_fetch))
+        False -> {
+          let acc = [issues, ..acc]
+          case next {
+            Some(token) -> search_pages(cfg, jql, Some(token), acc, count)
+            None -> Ok(acc |> list.reverse |> list.flatten)
+          }
+        }
       }
     }
   }
 }
 
 /// Query pairs for one search request: the bounded JQL, the pruned field
-/// allowlist, and the continuation token when there is one.
+/// allowlist, the page size, and the continuation token when there is one.
 pub fn search_page_query(
   jql: String,
   token: option.Option(String),
 ) -> List(#(String, String)) {
-  let base = [#("jql", jql), #("fields", search_fields)]
+  let base = [
+    #("jql", jql),
+    #("fields", search_fields),
+    #("maxResults", page_size),
+  ]
   case token {
     None -> base
     Some(token) -> list.append(base, [#("nextPageToken", token)])
@@ -215,40 +236,48 @@ fn boards_pages(
 
 /// ALL issues of one board, bulk: pages are followed until
 /// startAt+maxResults covers total (the agile API paginates by offset,
-/// unlike the platform search). Same issue shape as the platform search.
-/// Works for every board kind; this site's boards don't use sprints at
-/// all (the sprint endpoints answer 400 on them).
+/// unlike the platform search), up to `max_issue_fetch`. Same issue shape as
+/// the platform search. Works for every board kind; this site's boards don't
+/// use sprints at all (the sprint endpoints answer 400 on them).
 pub fn board_issues(
   cfg: Config,
   board_id: Int,
 ) -> Result(List(types.Issue), JiraError) {
-  board_issues_pages(cfg, board_id, 0, [])
+  board_issues_pages(cfg, board_id, 0, [], 0)
 }
 
 fn board_issues_pages(
   cfg: Config,
   board_id: Int,
   start_at: Int,
-  acc: List(types.Issue),
+  acc: List(List(types.Issue)),
+  count: Int,
 ) -> Result(List(types.Issue), JiraError) {
   use body <- result.try(get_with_query(cfg, board_issues_path(board_id), [
     #("startAt", int.to_string(start_at)),
-    #("maxResults", "100"),
+    #("maxResults", page_size),
     #("fields", search_fields),
   ]))
   case json.parse(body, types.agile_page_decoder()) {
     Error(error) -> Error(Decode(error))
     Ok(#(issues, total)) -> {
-      let acc = list.append(acc, issues)
-      case start_at + list.length(issues) < total && issues != [] {
-        True ->
-          board_issues_pages(
-            cfg,
-            board_id,
-            start_at + list.length(issues),
-            acc,
-          )
-        False -> Ok(acc)
+      let count = count + list.length(issues)
+      case count > max_issue_fetch {
+        True -> Error(TooMany(max_issue_fetch))
+        False -> {
+          let acc = [issues, ..acc]
+          case start_at + list.length(issues) < total && issues != [] {
+            True ->
+              board_issues_pages(
+                cfg,
+                board_id,
+                start_at + list.length(issues),
+                acc,
+                count,
+              )
+            False -> Ok(acc |> list.reverse |> list.flatten)
+          }
+        }
       }
     }
   }

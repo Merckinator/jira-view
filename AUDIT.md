@@ -17,8 +17,8 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **9 / 19 decided, 9 / 19 repo changes done** (finding 1 still needs a
-manual token rotation at Atlassian).
+Progress: **10 / 19 decided, 10 / 19 repo changes done** (finding 1 still needs
+a manual token rotation at Atlassian).
 
 ---
 
@@ -179,7 +179,7 @@ manual token rotation at Atlassian).
     a UI picker that defaults to Done. README updated. `gleam test`: 52
     passed; UI compiles.
 
-- [ ] **10. Search pages at Jira's default and inserts one row at a time**
+- [x] **10. Search pages at Jira's default and inserts one row at a time**
   - **Files:** `src/jira_view/jira.gleam:89-130`, `src/jira_view/db.gleam:138-143`
   - **What:** `/search/jql` requests set no `maxResults` (Jira defaults to 50),
     follow pages forever, append with `list.append`, and insert each issue
@@ -193,7 +193,11 @@ manual token rotation at Atlassian).
     dropped.
   - **If skipped:** Some views become very slow; the UI sits on "Loading…" with
     no cancel.
-  - **Decision:** _pending_
+  - **Decision:** Page size 100 and a 2,000-issue cap for both search and
+    boards; pages are accumulated as lists and flattened once (linear). The
+    per-issue INSERTs were removed with the cache (7). A new `TooMany` error
+    maps to `413 too_many_issues` with a "narrow the JQL / smaller board"
+    message. `search_page_query_test` updated; `gleam test`: 52 passed.
 
 - [ ] **11. The attachment proxy can run an attachment as the app**
   - **Files:** `src/jira_view/web.gleam:641-653`, `src/jira_view/jira.gleam:258-330`

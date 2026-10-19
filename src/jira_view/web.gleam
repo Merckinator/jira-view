@@ -782,6 +782,14 @@ fn jira_error_response(error: jira.JiraError) -> wisp.Response {
       json_error("jira_unreachable", string.inspect(error), 502)
     jira.Decode(error) ->
       json_error("decode_failed", string.inspect(error), 502)
+    jira.TooMany(limit) ->
+      json_error(
+        "too_many_issues",
+        "This view returned more than "
+          <> int.to_string(limit)
+          <> " issues. Narrow the JQL or pick a smaller board.",
+        413,
+      )
   }
 }
 

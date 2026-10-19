@@ -132,12 +132,14 @@ pub fn search_page_query_test() {
   |> should.equal([
     #("jql", "assignee = currentUser()"),
     #("fields", jira.search_fields),
+    #("maxResults", "100"),
   ])
 
   jira.search_page_query("created >= -30d ORDER BY updated DESC", Some("tok"))
   |> should.equal([
     #("jql", "created >= -30d ORDER BY updated DESC"),
     #("fields", jira.search_fields),
+    #("maxResults", "100"),
     #("nextPageToken", "tok"),
   ])
 }
