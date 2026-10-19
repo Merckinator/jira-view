@@ -33,6 +33,7 @@ comments and work log.
 ## Development
 
 ```sh
-gleam test   # Backend tests (Erlang target)
-./build.sh   # Rebuild the ui/ bundle into assets/app.js
+gleam test                                  # Backend tests (Erlang target)
+(cd ui && gleam test --target javascript)   # Frontend tests (Node)
+./build.sh                                  # Rebuild the ui/ bundle into assets/app.js
 ```

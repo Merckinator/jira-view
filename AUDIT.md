@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **12 / 19 decided, 12 / 19 repo changes done** (finding 1 still needs
+Progress: **13 / 19 decided, 13 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -232,7 +232,7 @@ a manual token rotation at Atlassian).
     `#...`; everything else falls back to text. The test covers `javascript:`,
     mixed case, `data:`, and empty hrefs. `gleam test`: 54 passed; UI compiles.
 
-- [ ] **13. The riskiest UI logic has no tests**
+- [x] **13. The riskiest UI logic has no tests**
   - **Files:** `ui/src/jira_view_ui.gleam:760-830`; no `ui/test/`
   - **What:** `move_item`, `insert_at` and `focus` implement drag and keyboard
     ordering; the backend has 48 tests, the UI package has none.
@@ -243,7 +243,12 @@ a manual token rotation at Atlassian).
     gleeunit tests (move down/up, boundaries, empty list), plus tests for reply
     matching.
   - **If skipped:** The feature the app exists for is the least tested part.
-  - **Decision:** _pending_
+  - **Decision:** Extracted `move_item`, `insert_at` and `focus` into
+    `ui/src/jira_view_ui/ordering.gleam`. Added
+    `ui/test/jira_view_ui_test.gleam`: 15 tests covering drag up/down,
+    same-index, out-of-range/empty, cursor clamp, stale/fresh detail and view
+    replies, resolution defaulting and the missing-resolution guard. UI tests
+    pass; backend 54; UI compiles. README has the test command.
 
 - [ ] **14. Delete view has no confirmation**
   - **Files:** `ui/src/jira_view_ui.gleam:294-303`, `1230-1237`

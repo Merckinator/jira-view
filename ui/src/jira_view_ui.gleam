@@ -22,6 +22,7 @@ import gleam/uri
 import jira_view_ui/adf_view
 import jira_view_ui/fetch
 import jira_view_ui/keyboard
+import jira_view_ui/ordering
 import jira_view_ui/sortable
 import lustre
 import lustre/attribute
@@ -395,7 +396,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     Dropped(from, to) ->
       case model.state {
         Ready(issues) -> {
-          let issues = move_item(issues, from, to)
+          let issues = ordering.move_item(issues, from, to)
           #(
             Model(..model, state: Ready(issues)),
             save_order(issues, model.current_view),
@@ -905,25 +906,7 @@ fn choose_resolution(
 /// opens at the top (j) or bottom (k) when nothing is focused yet.
 fn focus(state: State, cursor: Option(Int), down: Bool) -> Option(Int) {
   case state {
-    Ready(issues) ->
-      case issues {
-        [] -> cursor
-        _ -> {
-          let last = list.length(issues) - 1
-          case cursor {
-            None ->
-              Some(case down {
-                True -> 0
-                False -> last
-              })
-            Some(index) ->
-              Some(case down {
-                True -> int.min(index + 1, last)
-                False -> int.max(index - 1, 0)
-              })
-          }
-        }
-      }
+    Ready(issues) -> ordering.focus(issues, cursor, down)
     _ -> cursor
   }
 }
@@ -936,7 +919,7 @@ fn move_row(model: Model, delta: Int) -> #(Model, Effect(Msg)) {
       let target = index + delta
       case target >= 0 && target < list.length(issues) {
         True -> {
-          let issues = move_item(issues, index, target)
+          let issues = ordering.move_item(issues, index, target)
           #(
             Model(..model, state: Ready(issues), cursor: Some(target)),
             save_order(issues, model.current_view),
@@ -947,25 +930,6 @@ fn move_row(model: Model, delta: Int) -> #(Model, Effect(Msg)) {
     }
     _, _ -> #(model, effect.none())
   }
-}
-
-/// Remove the issue at `from` and reinsert it at `to` (post-drop index).
-/// Out-of-range indexes return the list unchanged.
-fn move_item(issues: List(Issue), from: Int, to: Int) -> List(Issue) {
-  case from >= 0 && to >= 0, list.drop(issues, from) {
-    True, [issue, ..rest] -> {
-      let before = list.take(issues, from)
-      case from < to {
-        True -> list.append(before, insert_at(rest, to - from, issue))
-        False -> list.append(insert_at(before, to, issue), rest)
-      }
-    }
-    _, _ -> issues
-  }
-}
-
-fn insert_at(items: List(a), at: Int, item: a) -> List(a) {
-  list.append(list.take(items, at), [item, ..list.drop(items, at)])
 }
 
 fn item_at(issues: List(Issue), index: Int) -> Result(Issue, Nil) {
