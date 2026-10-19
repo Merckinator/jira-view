@@ -198,7 +198,11 @@ fn save_order(request: wisp.Request, view_id: String) -> wisp.Response {
 /// The ordering request shape, decoded and validated. Exposed for tests.
 pub fn parse_order_body(body: String) -> Result(List(String), String) {
   case json.parse(body, order_body_decoder()) {
-    Ok(keys) -> Ok(keys)
+    Ok(keys) ->
+      case list.length(list.unique(keys)) == list.length(keys) {
+        True -> Ok(keys)
+        False -> Error("keys must be unique")
+      }
     Error(_) -> Error("expected {\"keys\": [\"KEY\", ...] } JSON")
   }
 }

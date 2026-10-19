@@ -298,6 +298,15 @@ pub fn db_view_order_round_trip_test() {
   |> should.be_ok
   |> should.equal(["KAN-2", "KAN-3", "KAN-1"])
 
+  // a failed save (duplicate keys) rolls back instead of leaving a partial
+  // order behind
+  db.save_view_order(conn, "my-issues", ["KAN-9", "KAN-9"])
+  |> should.be_error
+
+  db.load_view_order(conn, "my-issues")
+  |> should.be_ok
+  |> should.equal(["KAN-2", "KAN-3", "KAN-1"])
+
   // saving again replaces the whole ordering (per-view isolation included)
   db.save_view_order(conn, "my-issues", ["KAN-1"])
   |> should.be_ok
@@ -363,6 +372,10 @@ pub fn parse_order_body_test() {
   web.parse_order_body("{\"keys\": []}")
   |> should.be_ok
   |> should.equal([])
+
+  // duplicates would break the insert; reject them before touching the db
+  web.parse_order_body("{\"keys\": [\"KAN-1\", \"KAN-1\"]}")
+  |> should.be_error
 
   web.parse_order_body("{\"order\": []}")
   |> should.be_error

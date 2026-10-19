@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **4 / 19 decided, 4 / 19 repo changes done** (finding 1 still needs a
+Progress: **5 / 19 decided, 5 / 19 repo changes done** (finding 1 still needs a
 manual token rotation at Atlassian).
 
 ---
@@ -92,7 +92,7 @@ manual token rotation at Atlassian).
     comes with finding 13. Remaining known gap: two requests for the same
     issue/view can still race; a generation counter would close that if needed.
 
-- [ ] **5. Saving the order is not atomic**
+- [x] **5. Saving the order is not atomic**
   - **Files:** `src/jira_view/db.gleam:216-244`, `src/jira_view/web.gleam:146-192`
   - **What:** One PATCH deletes the old order, then inserts each key separately,
     with no transaction.
@@ -104,7 +104,11 @@ manual token rotation at Atlassian).
     in a transaction too.
   - **If skipped:** A failed or overlapping save silently eats the private
     ordering the app exists for.
-  - **Decision:** _pending_
+  - **Decision:** Atomic saves. Added `in_transaction` (`BEGIN IMMEDIATE` /
+    `COMMIT` / `ROLLBACK`) around `save_view_order` and `delete_view`;
+    `parse_order_body` now rejects duplicate keys with 400. Test: a duplicate
+    save returns an error and the previous order is unchanged. `gleam test`:
+    50 passed.
 
 ---
 

@@ -212,37 +212,69 @@ fn issue_row_decoder() -> decode.Decoder(Issue) {
 
 // ————— private per-view ordering (Phase 3) —————
 
+/// Run `next` inside a write transaction. SQLite's busy timeout (set by the
+/// driver) lets a concurrent writer wait instead of interleaving statements.
+fn in_transaction(
+  conn: sqlight.Connection,
+  next: fn() -> Result(a, DbError),
+) -> Result(a, DbError) {
+  use _ <- result.try(exec_sql(conn, "BEGIN IMMEDIATE"))
+  case next() {
+    Ok(value) ->
+      case exec_sql(conn, "COMMIT") {
+        Ok(_) -> Ok(value)
+        Error(error) -> {
+          let _ = exec_sql(conn, "ROLLBACK")
+          Error(error)
+        }
+      }
+    Error(error) -> {
+      let _ = exec_sql(conn, "ROLLBACK")
+      Error(error)
+    }
+  }
+}
+
+fn exec_sql(conn: sqlight.Connection, sql: String) -> Result(Nil, DbError) {
+  sqlight.exec(sql, on: conn)
+  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+}
+
 /// Replace the saved ordering of a view with `keys`, in that order
 /// (position = list index). The whole ordering is rewritten on every drop
 /// rather than patched incrementally — simpler, and correct by construction
 /// (rows not in the list simply disappear; the next save rewrites them).
+/// The delete and inserts are one transaction: a bad key leaves the previous
+/// ordering untouched instead of half-erasing it.
 pub fn save_view_order(
   conn: sqlight.Connection,
   view_id: String,
   keys: List(String),
 ) -> Result(Nil, DbError) {
-  use _ <- result.try(
-    sqlight.query(
-      "DELETE FROM view_issues WHERE view_id = ?",
-      on: conn,
-      with: [sqlight.text(view_id)],
-      expecting: decode.dynamic,
+  in_transaction(conn, fn() {
+    use _ <- result.try(
+      sqlight.query(
+        "DELETE FROM view_issues WHERE view_id = ?",
+        on: conn,
+        with: [sqlight.text(view_id)],
+        expecting: decode.dynamic,
+      )
+      |> result.map(fn(_) { Nil })
+      |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
     )
-    |> result.map(fn(_) { Nil })
-    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
-  )
-  keys
-  |> list.index_map(fn(key, position) { #(key, position) })
-  |> list.try_each(fn(row) {
-    let #(key, position) = row
-    sqlight.query(
-      "INSERT INTO view_issues (view_id, issue_key, position) VALUES (?, ?, ?)",
-      on: conn,
-      with: [sqlight.text(view_id), sqlight.text(key), sqlight.int(position)],
-      expecting: decode.dynamic,
-    )
-    |> result.map(fn(_) { Nil })
-    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+    keys
+    |> list.index_map(fn(key, position) { #(key, position) })
+    |> list.try_each(fn(row) {
+      let #(key, position) = row
+      sqlight.query(
+        "INSERT INTO view_issues (view_id, issue_key, position) VALUES (?, ?, ?)",
+        on: conn,
+        with: [sqlight.text(view_id), sqlight.text(key), sqlight.int(position)],
+        expecting: decode.dynamic,
+      )
+      |> result.map(fn(_) { Nil })
+      |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+    })
   })
 }
 
@@ -403,29 +435,32 @@ fn view_params(
 }
 
 /// Delete a view and its private ordering rows (ordering state must not
-/// outlive its view).
+/// outlive its view). One transaction, so a failure cannot leave half a
+/// deleted view behind.
 pub fn delete_view(
   conn: sqlight.Connection,
   view_id: String,
 ) -> Result(Nil, DbError) {
-  use _ <- result.try(
+  in_transaction(conn, fn() {
+    use _ <- result.try(
+      sqlight.query(
+        "DELETE FROM views WHERE id = ?",
+        on: conn,
+        with: [sqlight.text(view_id)],
+        expecting: decode.dynamic,
+      )
+      |> result.map(fn(_) { Nil })
+      |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
+    )
     sqlight.query(
-      "DELETE FROM views WHERE id = ?",
+      "DELETE FROM view_issues WHERE view_id = ?",
       on: conn,
       with: [sqlight.text(view_id)],
       expecting: decode.dynamic,
     )
     |> result.map(fn(_) { Nil })
-    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) }),
-  )
-  sqlight.query(
-    "DELETE FROM view_issues WHERE view_id = ?",
-    on: conn,
-    with: [sqlight.text(view_id)],
-    expecting: decode.dynamic,
-  )
-  |> result.map(fn(_) { Nil })
-  |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+    |> result.map_error(fn(error) { Sqlite(string.inspect(error)) })
+  })
 }
 
 /// Slug a view name into a reusable id ("Q3 Sprint!" -> "q3-sprint"),
