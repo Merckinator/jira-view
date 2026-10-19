@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **14 / 19 decided, 14 / 19 repo changes done** (finding 1 still needs
+Progress: **15 / 19 decided, 15 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -262,7 +262,7 @@ a manual token rotation at Atlassian).
     first Delete click arms it and the label becomes "Confirm delete", the
     second click deletes. UI test covers the first click; 16 UI tests pass.
 
-- [ ] **15. Transition buttons are not refreshed after a successful move**
+- [x] **15. Transition buttons are not refreshed after a successful move**
   - **Files:** `ui/src/jira_view_ui.gleam:435`, `1441-1459`
   - **What:** `GotTransition(_, _, Ok(_))` leaves the model unchanged, so the
     old transition list stays.
@@ -272,7 +272,9 @@ a manual token rotation at Atlassian).
   - **Fix:** On success, refetch transitions (and the issue detail) for that
     key, or clear the list while loading.
   - **If skipped:** Confusing errors and a second click that does nothing.
-  - **Decision:** _pending_
+  - **Decision:** Refetch both transitions and the issue detail on success; the
+    stale-reply guards from finding 4 ignore them if the panel changed. UI
+    tests: 16 passed; UI compiles.
 
 - [ ] **16. `./dev.sh` needs the network even though the bundle is committed**
   - **Files:** `dev.sh:13`, `build.sh:8-14`

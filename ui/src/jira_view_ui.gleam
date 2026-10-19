@@ -531,7 +531,10 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           }
         }
       }
-    GotTransition(_key, _to_status, Ok(_)) -> #(model, effect.none())
+    GotTransition(key, _to_status, Ok(_)) -> #(
+      model,
+      effect.batch([fetch_transitions(key), fetch_detail(key)]),
+    )
     GotTransition(key, _to_status, Error(message)) -> #(
       Model(..model, write_error: Some(message)),
       fetch_detail(key),
