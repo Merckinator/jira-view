@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **13 / 19 decided, 13 / 19 repo changes done** (finding 1 still needs
+Progress: **14 / 19 decided, 14 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -250,7 +250,7 @@ a manual token rotation at Atlassian).
     replies, resolution defaulting and the missing-resolution guard. UI tests
     pass; backend 54; UI compiles. README has the test command.
 
-- [ ] **14. Delete view has no confirmation**
+- [x] **14. Delete view has no confirmation**
   - **Files:** `ui/src/jira_view_ui.gleam:294-303`, `1230-1237`
   - **What:** The Delete button immediately deletes the view and its ordering.
   - **Problem:** One stray click permanently loses the view and its private
@@ -258,7 +258,9 @@ a manual token rotation at Atlassian).
   - **Fix:** Two-step confirm (a dialog or a "Confirm delete" button) in the edit
     panel.
   - **If skipped:** Accidental, unrecoverable data loss.
-  - **Decision:** _pending_
+  - **Decision:** Two-step confirm. `EditForm.confirm_delete` starts false; the
+    first Delete click arms it and the label becomes "Confirm delete", the
+    second click deletes. UI test covers the first click; 16 UI tests pass.
 
 - [ ] **15. Transition buttons are not refreshed after a successful move**
   - **Files:** `ui/src/jira_view_ui.gleam:435`, `1441-1459`

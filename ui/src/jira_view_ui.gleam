@@ -81,6 +81,8 @@ pub type EditForm {
     name: String,
     source: types.ViewSource,
     columns: List(String),
+    /// First click arms the Delete button; the second click deletes.
+    confirm_delete: Bool,
   )
 }
 
@@ -220,6 +222,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
               name: view.name,
               source: view.source,
               columns: view.columns,
+              confirm_delete: False,
             )),
             boards: None,
             view_error: None,
@@ -301,13 +304,28 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     )
     DeleteView ->
       case model.edit {
-        Some(EditForm(Some(id), _, _, _)) -> #(
-          Model(..model, view_error: None),
-          fetch.delete_json("/jira/views/" <> id, fn(result) {
-            GotViewDeleted(id, result)
-          }),
-        )
-        _ -> #(model, effect.none())
+        Some(form) ->
+          case form {
+            EditForm(Some(id), _, _, _, confirm_delete) ->
+              case confirm_delete {
+                False ->
+                  #(
+                    Model(
+                      ..model,
+                      edit: Some(EditForm(..form, confirm_delete: True)),
+                    ),
+                    effect.none(),
+                  )
+                True -> #(
+                  Model(..model, view_error: None),
+                  fetch.delete_json("/jira/views/" <> id, fn(result) {
+                    GotViewDeleted(id, result)
+                  }),
+                )
+              }
+            EditForm(None, _, _, _, _) -> #(model, effect.none())
+          }
+        None -> #(model, effect.none())
       }
     GotViewDeleted(id, Ok(_)) -> {
       let remaining = case model.views {
@@ -662,6 +680,7 @@ fn new_edit_form() -> EditForm {
     name: "",
     source: types.Jql(default_jql),
     columns: default_columns,
+    confirm_delete: False,
   )
 }
 
@@ -1355,7 +1374,12 @@ fn edit_panel(model: Model, form: EditForm) -> Element(Msg) {
           attribute.disabled(form.id == None),
           event.on_click(DeleteView),
         ],
-        [text("Delete")],
+        [
+          text(case form.confirm_delete {
+            True -> "Confirm delete"
+            False -> "Delete"
+          }),
+        ],
       ),
     ]),
   ])

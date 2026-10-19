@@ -205,3 +205,28 @@ pub fn required_resolution_without_pick_is_blocked_test() {
   next.write_error
   |> should.equal(Some("Pick a resolution first."))
 }
+
+// ————— destructive actions —————
+
+pub fn delete_requires_two_clicks_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      edit: Some(jira_view_ui.EditForm(
+        id: Some("v"),
+        name: "V",
+        source: types.Jql("project = X"),
+        columns: ["key"],
+        confirm_delete: False,
+      )),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.DeleteView)
+  next.edit
+  |> should.equal(Some(jira_view_ui.EditForm(
+    id: Some("v"),
+    name: "V",
+    source: types.Jql("project = X"),
+    columns: ["key"],
+    confirm_delete: True,
+  )))
+}
