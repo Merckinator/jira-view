@@ -8,7 +8,7 @@
 import gleam/bytes_tree
 import gleam/dynamic/decode
 import gleam/http
-import gleam/http/request.{path_segments}
+import gleam/http/request.{get_header, path_segments}
 import gleam/int
 import gleam/json
 import gleam/list
@@ -24,6 +24,30 @@ import sqlight
 import wisp
 
 pub fn handle_request(request: wisp.Request) -> wisp.Response {
+  case is_local_host(request) {
+    False ->
+      json_error("invalid_host", "Host must be 127.0.0.1 or localhost", 400)
+    True -> handle_local_request(request)
+  }
+}
+
+/// The app is only meant to be opened at 127.0.0.1 or localhost. Rejecting
+/// other Host headers blocks DNS-rebinding pages from reading the API.
+fn is_local_host(request: wisp.Request) -> Bool {
+  case get_header(request, "host") {
+    Ok(host) -> list.contains(["127.0.0.1", "localhost"], host_name(host))
+    Error(_) -> False
+  }
+}
+
+fn host_name(host: String) -> String {
+  case string.split(host, ":") {
+    [name, ..] -> string.lowercase(name)
+    [] -> string.lowercase(host)
+  }
+}
+
+fn handle_local_request(request: wisp.Request) -> wisp.Response {
   use <- wisp.serve_static(request, under: "/assets", from: "assets")
   use <- wisp.log_request(request)
   case path_segments(request) {

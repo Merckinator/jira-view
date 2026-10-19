@@ -12,10 +12,18 @@ import jira_view/jira
 import jira_view/web
 import shared/adf
 import shared/types
+import wisp
 import wisp/simulate
 
 pub fn main() {
   gleeunit.main()
+}
+
+/// Wisp's simulated requests default to `wisp.example.com`; the handler now
+/// accepts only local hosts, so every test request goes through this helper.
+fn local_request(method: http.Method, path: String) -> wisp.Request {
+  simulate.request(method, path)
+  |> simulate.header("host", "127.0.0.1:8787")
 }
 
 // config
@@ -54,8 +62,18 @@ pub fn me_missing_config_test() {
   envoy.unset("JIRA_EMAIL")
   envoy.unset("JIRA_API_TOKEN")
   envoy.unset("JIRA_BASE_URL")
-  let resp = web.handle_request(simulate.request(http.Get, "/api/me"))
+  let resp = web.handle_request(local_request(http.Get, "/api/me"))
   resp.status |> should.equal(503)
+}
+
+/// A page on another origin must not be able to read the local API through
+/// DNS rebinding, which would send its own Host header.
+pub fn foreign_host_rejected_test() {
+  let resp =
+    simulate.request(http.Get, "/jira/views")
+    |> simulate.header("host", "evil.example")
+    |> web.handle_request
+  resp.status |> should.equal(400)
 }
 
 pub fn me_jira_unreachable_test() {
@@ -63,14 +81,14 @@ pub fn me_jira_unreachable_test() {
   envoy.set("JIRA_EMAIL", "jeff@example.com")
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
-  let resp = web.handle_request(simulate.request(http.Get, "/api/me"))
+  let resp = web.handle_request(local_request(http.Get, "/api/me"))
   resp.status |> should.equal(502)
 }
 
 // web: /jira/search + /jira/issue requirements
 
 pub fn search_missing_jql_test() {
-  let resp = web.handle_request(simulate.request(http.Get, "/jira/search"))
+  let resp = web.handle_request(local_request(http.Get, "/jira/search"))
   resp.status |> should.equal(400)
 }
 
@@ -79,7 +97,7 @@ pub fn search_jira_unreachable_test() {
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
   let resp =
-    web.handle_request(simulate.request(
+    web.handle_request(local_request(
       http.Get,
       "/jira/search?jql=created%20%3E%3D%20-30d",
     ))
@@ -90,7 +108,7 @@ pub fn issue_jira_unreachable_test() {
   envoy.set("JIRA_EMAIL", "jeff@example.com")
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
-  let resp = web.handle_request(simulate.request(http.Get, "/jira/issue/KAN-1"))
+  let resp = web.handle_request(local_request(http.Get, "/jira/issue/KAN-1"))
   resp.status |> should.equal(502)
 }
 
@@ -301,7 +319,7 @@ pub fn db_view_order_round_trip_test() {
 pub fn order_patch_rejects_bad_body_test() {
   envoy.set("JIRA_VIEW_DB", ":memory:")
   let request =
-    simulate.request(http.Patch, "/jira/views/my-issues/order")
+    local_request(http.Patch, "/jira/views/my-issues/order")
     |> simulate.json_body(
       json.object([#("order", json.array([], json.string))]),
     )
@@ -312,7 +330,7 @@ pub fn order_patch_rejects_bad_body_test() {
 pub fn order_patch_rejects_empty_order_test() {
   envoy.set("JIRA_VIEW_DB", ":memory:")
   let request =
-    simulate.request(http.Patch, "/jira/views/my-issues/order")
+    local_request(http.Patch, "/jira/views/my-issues/order")
     |> simulate.json_body(json.object([#("keys", json.array([], json.string))]))
   let resp = web.handle_request(request)
   resp.status |> should.equal(400)
@@ -324,7 +342,7 @@ pub fn order_patch_rejects_empty_order_test() {
 pub fn order_patch_stores_order_test() {
   envoy.set("JIRA_VIEW_DB", "order-route-test.db")
   let request =
-    simulate.request(http.Patch, "/jira/views/my-issues/order")
+    local_request(http.Patch, "/jira/views/my-issues/order")
     |> simulate.json_body(
       json.object([#("keys", json.array(["KAN-2", "KAN-1"], json.string))]),
     )
@@ -532,7 +550,7 @@ pub fn transition_post_route_unreachable_test() {
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
   let request =
-    simulate.request(http.Post, "/jira/issue/KAN-1/transition")
+    local_request(http.Post, "/jira/issue/KAN-1/transition")
     |> simulate.json_body(json.object([#("id", json.string("41"))]))
   let resp = web.handle_request(request)
   // valid body, but the metadata GET can't reach Jira
@@ -545,17 +563,17 @@ pub fn write_routes_bad_body_test() {
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
 
   let bad_transition =
-    simulate.request(http.Post, "/jira/issue/KAN-1/transition")
+    local_request(http.Post, "/jira/issue/KAN-1/transition")
     |> simulate.json_body(json.null())
   web.handle_request(bad_transition).status |> should.equal(400)
 
   let bad_comment =
-    simulate.request(http.Post, "/jira/issue/KAN-1/comment")
+    local_request(http.Post, "/jira/issue/KAN-1/comment")
     |> simulate.json_body(json.object([#("nope", json.string("hi"))]))
   web.handle_request(bad_comment).status |> should.equal(400)
 
   let bad_worklog =
-    simulate.request(http.Post, "/jira/issue/KAN-1/worklog")
+    local_request(http.Post, "/jira/issue/KAN-1/worklog")
     |> simulate.json_body(json.object([#("x", json.string(""))]))
   web.handle_request(bad_worklog).status |> should.equal(400)
 }
@@ -739,7 +757,7 @@ pub fn view_json_round_trip_test() {
 /// leftovers and every creating test cleans up after itself.
 pub fn views_list_seeded_route_test() {
   envoy.set("JIRA_VIEW_DB", "views-route-test.db")
-  let resp = web.handle_request(simulate.request(http.Get, "/jira/views"))
+  let resp = web.handle_request(local_request(http.Get, "/jira/views"))
   resp.status |> should.equal(200)
 
   let assert Ok(views) =
@@ -757,12 +775,12 @@ pub fn view_create_update_delete_route_test() {
 
   // tolerate leftovers from earlier runs: recreate the same slug cleanly
   let _ =
-    web.handle_request(simulate.request(http.Delete, "/jira/views/sprint-view"))
+    web.handle_request(local_request(http.Delete, "/jira/views/sprint-view"))
 
   // create: unique slug id is assigned server-side
   let created =
     web.handle_request(
-      simulate.request(http.Post, "/jira/views")
+      local_request(http.Post, "/jira/views")
       |> simulate.json_body(
         json.object([
           #("name", json.string("Sprint view")),
@@ -781,7 +799,7 @@ pub fn view_create_update_delete_route_test() {
   // update it
   let put =
     web.handle_request(
-      simulate.request(http.Put, "/jira/views/sprint-view")
+      local_request(http.Put, "/jira/views/sprint-view")
       |> simulate.json_body(
         json.object([
           #("name", json.string("Sprint view (done)")),
@@ -794,10 +812,10 @@ pub fn view_create_update_delete_route_test() {
 
   // delete it; further deletes 404
   let deleted =
-    web.handle_request(simulate.request(http.Delete, "/jira/views/sprint-view"))
+    web.handle_request(local_request(http.Delete, "/jira/views/sprint-view"))
   deleted.status |> should.equal(200)
   let deleted_again =
-    web.handle_request(simulate.request(http.Delete, "/jira/views/sprint-view"))
+    web.handle_request(local_request(http.Delete, "/jira/views/sprint-view"))
   deleted_again.status |> should.equal(404)
 }
 
@@ -806,7 +824,7 @@ pub fn view_create_rejects_bad_bodies_test() {
 
   let neither =
     web.handle_request(
-      simulate.request(http.Post, "/jira/views")
+      local_request(http.Post, "/jira/views")
       |> simulate.json_body(
         json.object([#("name", json.string("x"))]),
       ),
@@ -815,7 +833,7 @@ pub fn view_create_rejects_bad_bodies_test() {
 
   let both =
     web.handle_request(
-      simulate.request(http.Post, "/jira/views")
+      local_request(http.Post, "/jira/views")
       |> simulate.json_body(
         json.object([
           #("name", json.string("x")),
@@ -828,7 +846,7 @@ pub fn view_create_rejects_bad_bodies_test() {
 
   let empty_name =
     web.handle_request(
-      simulate.request(http.Post, "/jira/views")
+      local_request(http.Post, "/jira/views")
       |> simulate.json_body(
         json.object([#("name", json.string("")), #("jql", json.string("x"))]),
       ),
@@ -842,7 +860,7 @@ pub fn boards_unreachable_test() {
   envoy.set("JIRA_EMAIL", "jeff@example.com")
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
-  let resp = web.handle_request(simulate.request(http.Get, "/jira/boards"))
+  let resp = web.handle_request(local_request(http.Get, "/jira/boards"))
   resp.status |> should.equal(502)
 }
 
@@ -850,7 +868,7 @@ pub fn board_issues_bad_board_id_test() {
   envoy.set("JIRA_EMAIL", "jeff@example.com")
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
-  let request = simulate.request(http.Get, "/jira/board/notanumber/issues")
+  let request = local_request(http.Get, "/jira/board/notanumber/issues")
   web.handle_request(request).status |> should.equal(400)
 }
 
@@ -859,7 +877,7 @@ pub fn board_issues_unreachable_test() {
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
   let request =
-    simulate.request(http.Get, "/jira/board/1/issues?view=my-issues")
+    local_request(http.Get, "/jira/board/1/issues?view=my-issues")
   web.handle_request(request).status |> should.equal(502)
 }
 
@@ -868,7 +886,7 @@ pub fn attachment_unreachable_test() {
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
   let resp =
-    web.handle_request(simulate.request(http.Get, "/jira/attachment/10001"))
+    web.handle_request(local_request(http.Get, "/jira/attachment/10001"))
   resp.status |> should.equal(502)
 }
 
@@ -877,6 +895,6 @@ pub fn avatar_unreachable_test() {
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
   let resp =
-    web.handle_request(simulate.request(http.Get, "/jira/avatar/5a67cc62"))
+    web.handle_request(local_request(http.Get, "/jira/avatar/5a67cc62"))
   resp.status |> should.equal(502)
 }
