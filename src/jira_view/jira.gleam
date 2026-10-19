@@ -60,6 +60,9 @@ pub fn worklog_path(key: String) -> String {
   issue_path(key) <> "/worklog"
 }
 
+/// Global resolution values for the transition picker.
+pub const resolutions_path = "/rest/api/3/resolution"
+
 // ————— agile API (Phase 5 board views) —————
 
 pub const boards_path = "/rest/agile/1.0/board"

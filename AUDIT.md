@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **8 / 19 decided, 8 / 19 repo changes done** (finding 1 still needs a
+Progress: **9 / 19 decided, 9 / 19 repo changes done** (finding 1 still needs a
 manual token rotation at Atlassian).
 
 ---
@@ -163,7 +163,7 @@ manual token rotation at Atlassian).
     saving. Added a db assertion plus PUT/PATCH route tests. `gleam test`:
     50 passed.
 
-- [ ] **9. Every transition gets resolution "Done"**
+- [x] **9. Every transition gets resolution "Done"**
   - **Files:** `src/jira_view/web.gleam:285-306`
   - **What:** When a transition screen requires `resolution`, the app always
     posts `{"name": "Done"}`.
@@ -173,7 +173,11 @@ manual token rotation at Atlassian).
     is required; at minimum map common resolution names from the transition
     name instead of hardcoding "Done".
   - **If skipped:** Reports and filters by resolution become wrong.
-  - **Decision:** _pending_
+  - **Decision:** Resolution picker. Added the shared `Resolution` type and
+    decoder, a `/jira/resolutions` proxy, an optional `resolution` in the
+    transition request (required transitions return 400 if it is missing), and
+    a UI picker that defaults to Done. README updated. `gleam test`: 52
+    passed; UI compiles.
 
 - [ ] **10. Search pages at Jira's default and inserts one row at a time**
   - **Files:** `src/jira_view/jira.gleam:89-130`, `src/jira_view/db.gleam:138-143`

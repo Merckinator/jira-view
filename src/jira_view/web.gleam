@@ -74,6 +74,8 @@ fn handle_local_request(request: wisp.Request) -> wisp.Response {
         board_issues(request, board_id)
       })
     ["jira", "boards"] -> wisp.require_method(request, http.Get, boards)
+    ["jira", "resolutions"] ->
+      wisp.require_method(request, http.Get, resolutions)
     ["jira", "views"] -> views_endpoint(request)
     ["jira", "views", view_id] -> view_endpoint(request, view_id)
     ["jira", "views", view_id, "order"] ->
@@ -239,17 +241,30 @@ fn issue_transitions(key: String) -> wisp.Response {
   }
 }
 
-/// POST /jira/issue/:key/transition — body {"id": "31"}. The transitions
-/// metadata is read fresh on this call; the metadata drives two behaviours:
-/// the common required field (`resolution`, company-managed "Done") is
-/// auto-filled, and transitions needing other screen input the UI does not
-/// collect yet are refused with 400 instead of Jira's raw screen error.
+/// GET /jira/resolutions — Jira's global resolution values, raw passthrough
+/// for the transition picker.
+fn resolutions() -> wisp.Response {
+  case config.load() {
+    Error(message) -> json_error("configuration_incomplete", message, 503)
+    Ok(cfg) ->
+      case jira.get(cfg, jira.resolutions_path) {
+        Ok(body) -> wisp.json_response(body, 200)
+        Error(error) -> jira_error_response(error)
+      }
+  }
+}
+
+/// POST /jira/issue/:key/transition — body {"id": "31", "resolution"?: "Done"}.
+/// The transitions metadata is read fresh on this call; the metadata drives two
+/// behaviours: a required `resolution` comes from the UI's picker, and
+/// transitions needing other screen input the UI does not collect yet are
+/// refused with 400 instead of Jira's raw screen error.
 fn transition(request: wisp.Request, key: String) -> wisp.Response {
   use <- wisp.require_content_type(request, "application/json")
   use body <- wisp.require_string_body(request)
   case parse_transition_body(body) {
     Error(message) -> json_error("bad_request", message, 400)
-    Ok(id) ->
+    Ok(#(id, resolution)) ->
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
@@ -278,21 +293,30 @@ fn transition(request: wisp.Request, key: String) -> wisp.Response {
                             400,
                           )
                         [] ->
-                          case
-                            jira.post(
-                              cfg,
-                              jira.transitions_path(key),
-                              transition_post_body(t),
-                            )
-                          {
-                            Ok(_) ->
-                              json.object([
-                                #("applied", json.bool(True)),
-                                #("status", json.string(t.to_status)),
-                              ])
-                              |> json.to_string
-                              |> wisp.json_response(200)
-                            Error(error) -> jira_error_response(error)
+                          case transition_post_body(t, resolution) {
+                            Error(message) ->
+                              json_error(
+                                "transition_requires_resolution",
+                                message,
+                                400,
+                              )
+                            Ok(body) ->
+                              case
+                                jira.post(
+                                  cfg,
+                                  jira.transitions_path(key),
+                                  body,
+                                )
+                              {
+                                Ok(_) ->
+                                  json.object([
+                                    #("applied", json.bool(True)),
+                                    #("status", json.string(t.to_status)),
+                                  ])
+                                  |> json.to_string
+                                  |> wisp.json_response(200)
+                                Error(error) -> jira_error_response(error)
+                              }
                           }
                       }
                   }
@@ -312,37 +336,73 @@ pub fn unexpected_required_fields(
   |> list.map(fn(field) { field.key })
 }
 
-/// The POST body Jira expects for a transition; `resolution` is auto-filled
-/// when the workflow's screen requires it. Exposed for tests.
-pub fn transition_post_body(transition: types.Transition) -> String {
+/// The POST body Jira expects for a transition; `resolution` is taken from the
+/// picker when the workflow's screen requires it. Exposed for tests.
+pub fn transition_post_body(
+  transition: types.Transition,
+  resolution: Option(String),
+) -> Result(String, String) {
   let requires_resolution =
     list.any(transition.fields, fn(field) {
       field.required && field.key == "resolution"
     })
-  let fields = case requires_resolution {
-    False -> []
-    True -> [
-      #(
-        "fields",
-        json.object([
-          #("resolution", json.object([#("name", json.string("Done"))])),
-        ]),
-      ),
-    ]
+  let fields = case requires_resolution, resolution {
+    False, _ -> Ok([])
+    True, Some(name) ->
+      case string.trim(name) {
+        "" ->
+          Error(
+            "transition " <> transition.name <> " requires a resolution",
+          )
+        name ->
+          Ok([
+            #(
+              "fields",
+              json.object([
+                #("resolution", json.object([#("name", json.string(name))])),
+              ]),
+            ),
+          ])
+      }
+    True, None ->
+      Error("transition " <> transition.name <> " requires a resolution")
   }
-  json.object([
-    #("transition", json.object([#("id", json.string(transition.id))])),
-    ..fields
-  ])
-  |> json.to_string
+  case fields {
+    Error(message) -> Error(message)
+    Ok(fields) ->
+      Ok(
+        json.object([
+          #("transition", json.object([#("id", json.string(transition.id))])),
+          ..fields
+        ])
+        |> json.to_string,
+      )
+  }
 }
 
-/// The transition request body shape `{"id": "…"}`. Exposed for tests.
-pub fn parse_transition_body(body: String) -> Result(String, String) {
-  case json.parse(body, decode.field("id", decode.string, decode.success)) {
-    Ok(id) -> Ok(id)
-    Error(_) -> Error("expected {\"id\": \"<transition id>\"} JSON")
+/// The transition request body shape `{"id": "…", "resolution"?: "…"}`.
+/// Exposed for tests.
+pub fn parse_transition_body(
+  body: String,
+) -> Result(#(String, Option(String)), String) {
+  case json.parse(body, transition_body_decoder()) {
+    Ok(value) -> Ok(value)
+    Error(_) ->
+      Error(
+        "expected {\"id\": \"<transition id>\", \"resolution\": "
+          <> "\"<resolution name>\" (optional)} JSON",
+      )
   }
+}
+
+fn transition_body_decoder() -> decode.Decoder(#(String, Option(String))) {
+  use id <- decode.field("id", decode.string)
+  use resolution <- decode.optional_field(
+    "resolution",
+    None,
+    decode.optional(decode.string),
+  )
+  decode.success(#(id, resolution))
 }
 
 /// POST /jira/issue/:key/comment — body {"text": "…"}. The text is wrapped

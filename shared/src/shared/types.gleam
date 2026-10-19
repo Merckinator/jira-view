@@ -107,9 +107,15 @@ pub type Transition {
 }
 
 /// One field of a transition screen. `key` is the system field id
-/// ("resolution", …); the resolution field is the one this app auto-fills.
+/// ("resolution", …); the resolution field is the one this app fills from its
+/// picker.
 pub type TransitionField {
   TransitionField(key: String, required: Bool)
+}
+
+/// A global resolution value from GET /rest/api/3/resolution.
+pub type Resolution {
+  Resolution(id: String, name: String)
 }
 
 // ————— views (Phase 5) —————
@@ -396,6 +402,17 @@ fn transition_field_decoder() -> decode.Decoder(TransitionField) {
   use key <- decode.then(decode.optionally_at(["key"], "", decode.string))
   use required <- decode.field("required", decode.bool)
   decode.success(TransitionField(key:, required:))
+}
+
+/// The bare array from GET /rest/api/3/resolution.
+pub fn resolutions_decoder() -> decode.Decoder(List(Resolution)) {
+  decode.list(resolution_decoder())
+}
+
+fn resolution_decoder() -> decode.Decoder(Resolution) {
+  use id <- decode.field("id", decode.string)
+  use name <- decode.field("name", decode.string)
+  decode.success(Resolution(id:, name:))
 }
 
 /// The app's pruned shapes (what the backend re-encodes POST responses into,

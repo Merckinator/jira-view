@@ -457,11 +457,20 @@ pub fn transition_with_required_resolution_test() {
       types.jira_transitions_decoder(),
     )
 
-  // resolution is auto-filled into the POST body…
-  web.transition_post_body(transition)
-  |> should.equal(
+  // the picker's chosen resolution goes into the POST body...
+  web.transition_post_body(transition, Some("Done"))
+  |> should.equal(Ok(
     "{\"transition\":{\"id\":\"31\"},\"fields\":{\"resolution\":{\"name\":\"Done\"}}}",
-  )
+  ))
+
+  web.transition_post_body(transition, Some("Won't Do"))
+  |> should.equal(Ok(
+    "{\"transition\":{\"id\":\"31\"},\"fields\":{\"resolution\":{\"name\":\"Won't Do\"}}}",
+  ))
+
+  // ...and a missing resolution is refused before any request is sent.
+  web.transition_post_body(transition, None)
+  |> should.be_error
 
   // …and never reported as an unexpected requirement; other required
   // fields are refused up front.
@@ -471,16 +480,31 @@ pub fn transition_with_required_resolution_test() {
 
 pub fn transition_post_body_plain_test() {
   let transition = types.Transition("21", "In Progress", "In Progress", [])
-  web.transition_post_body(transition)
-  |> should.equal("{\"transition\":{\"id\":\"21\"}}")
+  web.transition_post_body(transition, None)
+  |> should.equal(Ok("{\"transition\":{\"id\":\"21\"}}"))
+}
+
+pub fn resolutions_decoder_test() {
+  json.parse(
+    "[{\"id\":\"1\",\"name\":\"Done\",\"description\":\"Work is complete\"},{\"id\":\"2\",\"name\":\"Won't Do\",\"description\":\"Not planned\"}]",
+    types.resolutions_decoder(),
+  )
+  |> should.equal(Ok([
+    types.Resolution("1", "Done"),
+    types.Resolution("2", "Won't Do"),
+  ]))
 }
 
 // Phase 4: write request bodies + routes
 
 pub fn parse_write_bodies_test() {
   web.parse_transition_body("{\"id\": \"41\"}")
-  |> should.be_ok
-  |> should.equal("41")
+  |> should.equal(Ok(#("41", None)))
+
+  web.parse_transition_body(
+    "{\"id\": \"41\", \"resolution\": \"Duplicate\"}",
+  )
+  |> should.equal(Ok(#("41", Some("Duplicate"))))
 
   web.parse_transition_body("{\"transition\": {}}")
   |> should.be_error
@@ -860,6 +884,14 @@ pub fn boards_unreachable_test() {
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
   let resp = web.handle_request(local_request(http.Get, "/jira/boards"))
+  resp.status |> should.equal(502)
+}
+
+pub fn resolutions_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let resp = web.handle_request(local_request(http.Get, "/jira/resolutions"))
   resp.status |> should.equal(502)
 }
 

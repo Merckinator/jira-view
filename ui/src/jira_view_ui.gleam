@@ -57,6 +57,8 @@ pub type Model {
     // — detail panel writes (Phase 4) —
     selected: Option(Detail),
     transitions: Option(Result(List(types.Transition), String)),
+    resolutions: Option(Result(List(types.Resolution), String)),
+    resolution_draft: String,
     write_error: Option(String),
     comment_draft: String,
     pending_comments: List(String),
@@ -124,6 +126,8 @@ pub type Msg {
   GotDetail(key: String, result: Result(IssueDetail, String))
   CloseDetail
   GotTransitions(key: String, result: Result(List(types.Transition), String))
+  GotResolutions(Result(List(types.Resolution), String))
+  SetResolution(String)
   TransitionClicked(transition: types.Transition)
   GotTransition(key: String, to_status: String, result: Result(Nil, String))
   SetCommentDraft(String)
@@ -165,6 +169,8 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       order_error: None,
       selected: None,
       transitions: None,
+      resolutions: None,
+      resolution_draft: "",
       write_error: None,
       comment_draft: "",
       pending_comments: [],
@@ -173,6 +179,7 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
     ),
     effect.batch([
       fetch_views(),
+      fetch_resolutions(),
       // Document-level key handler: attach once at startup (idempotent FFI).
       keyboard.attach(keyboard_bindings()),
     ]),
@@ -447,18 +454,63 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           )
         False -> #(model, effect.none())
       }
+    GotResolutions(Ok(resolutions)) ->
+      #(
+        Model(
+          ..model,
+          resolutions: Some(Ok(resolutions)),
+          resolution_draft: choose_resolution(
+            model.resolution_draft,
+            resolutions,
+          ),
+        ),
+        effect.none(),
+      )
+    GotResolutions(Error(message)) ->
+      #(Model(..model, resolutions: Some(Error(message))), effect.none())
+    SetResolution(name) -> #(
+      Model(..model, resolution_draft: name),
+      effect.none(),
+    )
     TransitionClicked(transition) ->
       case selected_key(model) {
-        Ok(key) -> #(
-          Model(
-            ..model,
-            state: flip_row_status(model.state, key, transition.to_status),
-            selected: flip_detail_status(model.selected, transition.to_status),
-            write_error: None,
-          ),
-          post_transition(key, transition),
-        )
         Error(_) -> #(model, effect.none())
+        Ok(key) -> {
+          let requires_resolution =
+            transition_requires_resolution(transition)
+          case requires_resolution, string.trim(model.resolution_draft) {
+            True, "" ->
+              #(
+                Model(
+                  ..model,
+                  write_error: Some("Pick a resolution first."),
+                ),
+                effect.none(),
+              )
+            _, _ -> {
+              let resolution = case requires_resolution {
+                True -> Some(string.trim(model.resolution_draft))
+                False -> None
+              }
+              #(
+                Model(
+                  ..model,
+                  state: flip_row_status(
+                    model.state,
+                    key,
+                    transition.to_status,
+                  ),
+                  selected: flip_detail_status(
+                    model.selected,
+                    transition.to_status,
+                  ),
+                  write_error: None,
+                ),
+                post_transition(key, transition, resolution),
+              )
+            }
+          }
+        }
       }
     GotTransition(_key, _to_status, Ok(_)) -> #(model, effect.none())
     GotTransition(key, _to_status, Error(message)) -> #(
@@ -651,6 +703,19 @@ fn views_wrapper_decoder() -> decode.Decoder(List(types.ViewDef)) {
   decode.field("views", decode.list(types.app_view_decoder()), decode.success)
 }
 
+fn fetch_resolutions() -> Effect(Msg) {
+  fetch.get("/jira/resolutions", fn(response) {
+    case response {
+      Ok(body) ->
+        case json.parse(body, types.resolutions_decoder()) {
+          Ok(resolutions) -> GotResolutions(Ok(resolutions))
+          Error(error) -> GotResolutions(Error(string.inspect(error)))
+        }
+      Error(message) -> GotResolutions(Error(message))
+    }
+  })
+}
+
 fn fetch_boards() -> Effect(Msg) {
   fetch.get("/jira/boards", fn(response) {
     case response {
@@ -763,6 +828,10 @@ fn decode_issues(
 }
 
 fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
+  let resolutions_effect = case model.resolutions {
+    Some(Ok(_)) -> effect.none()
+    _ -> fetch_resolutions()
+  }
   #(
     Model(
       ..model,
@@ -774,7 +843,7 @@ fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
       worklog_draft: "",
       pending_worklog: [],
     ),
-    effect.batch([fetch_detail(key), fetch_transitions(key)]),
+    effect.batch([fetch_detail(key), fetch_transitions(key), resolutions_effect]),
   )
 }
 
@@ -798,6 +867,37 @@ fn is_current_view(model: Model, view_id: String) -> Bool {
   case model.current_view {
     Some(view) -> view.id == view_id
     None -> False
+  }
+}
+
+fn transition_requires_resolution(transition: types.Transition) -> Bool {
+  list.any(transition.fields, fn(field) {
+    field.required && field.key == "resolution"
+  })
+}
+
+fn needs_resolution(transitions: List(types.Transition)) -> Bool {
+  list.any(transitions, transition_requires_resolution)
+}
+
+/// Keep the user's pick if it still exists; otherwise prefer Done, then the
+/// first value Jira returned.
+fn choose_resolution(
+  current: String,
+  resolutions: List(types.Resolution),
+) -> String {
+  let names = list.map(resolutions, fn(resolution) { resolution.name })
+  case list.contains(names, current) {
+    True -> current
+    False ->
+      case list.contains(names, "Done") {
+        True -> "Done"
+        False ->
+          case names {
+            [first, ..] -> first
+            [] -> ""
+          }
+      }
   }
 }
 
@@ -922,10 +1022,22 @@ fn fetch_transitions(key: String) -> Effect(Msg) {
   })
 }
 
-fn post_transition(key: String, transition: types.Transition) -> Effect(Msg) {
+fn post_transition(
+  key: String,
+  transition: types.Transition,
+  resolution: Option(String),
+) -> Effect(Msg) {
+  let body =
+    list.flatten([
+      [#("id", json.string(transition.id))],
+      case resolution {
+        Some(name) -> [#("resolution", json.string(name))]
+        None -> []
+      },
+    ])
   fetch.post_json(
     "/jira/issue/" <> key <> "/transition",
-    json.to_string(json.object([#("id", json.string(transition.id))])),
+    json.to_string(json.object(body)),
     fn(result) { GotTransition(key, transition.to_status, result) },
   )
 }
@@ -1464,7 +1576,7 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
               html.p([attribute.class("jv-write-error")], [text(message)])
             None -> element.none()
           },
-          transitions_row(model.transitions),
+          transitions_row(model),
           adf_view.render(info.description),
           attachments_section(info.attachments),
           comments_section(
@@ -1483,26 +1595,61 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
 }
 
 /// One button per available transition of the open issue. The POST applies
-/// optimistically in `update`; an invalid move is Jira's to reject.
-fn transitions_row(
-  transitions: Option(Result(List(types.Transition), String)),
-) -> Element(Msg) {
-  html.div([attribute.class("jv-transitions")], case transitions {
+/// optimistically in `update`; an invalid move is Jira's to reject. If any
+/// transition needs a resolution, a picker is shown above the buttons.
+fn transitions_row(model: Model) -> Element(Msg) {
+  html.div([attribute.class("jv-transitions")], case model.transitions {
     Some(Ok(transitions)) ->
-      list.map(transitions, fn(transition) {
-        html.button(
-          [
-            attribute.class("jv-transition"),
-            event.on_click(TransitionClicked(transition)),
-          ],
-          [text(transition.name)],
-        )
-      })
+      list.flatten([
+        case needs_resolution(transitions) {
+          True -> [resolution_select(model)]
+          False -> []
+        },
+        list.map(transitions, fn(transition) {
+          html.button(
+            [
+              attribute.class("jv-transition"),
+              event.on_click(TransitionClicked(transition)),
+            ],
+            [text(transition.name)],
+          )
+        }),
+      ])
     Some(Error(message)) -> [
       html.span([attribute.class("jv-note")], [text("Transitions: " <> message)]),
     ]
     None -> [html.span([attribute.class("jv-note")], [text("Transitions…")])]
   })
+}
+
+fn resolution_select(model: Model) -> Element(Msg) {
+  html.label([attribute.class("jv-resolution")], [
+    html.span([attribute.class("jv-note")], [text("Resolution:")]),
+    case model.resolutions {
+      Some(Ok(resolutions)) ->
+        html.select(
+          [
+            attribute.class("jv-resolution-select"),
+            attribute.value(model.resolution_draft),
+            event.on_change(SetResolution),
+          ],
+          list.map(resolutions, fn(resolution) {
+            html.option(
+              [
+                attribute.value(resolution.name),
+                attribute.selected(resolution.name == model.resolution_draft),
+              ],
+              resolution.name,
+            )
+          }),
+        )
+      Some(Error(message)) ->
+        html.span([attribute.class("jv-write-error")], [
+          text("Resolutions unavailable: " <> message),
+        ])
+      None -> html.span([attribute.class("jv-note")], [text("loading…")])
+    },
+  ])
 }
 
 /// Attachments render inline (images through the /jira/attachment proxy)
