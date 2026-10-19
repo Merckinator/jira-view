@@ -725,8 +725,8 @@ fn avatar(account_id: String) -> wisp.Response {
 }
 
 /// GET /jira/attachment/:id — the attachment content, byte-level, with the
-/// auth headers the browser cannot have. Inline images render directly;
-/// other files download through anchor download= (same-origin).
+/// auth headers the browser cannot have. Only safe raster images render
+/// inline; everything else is served as a download. `nosniff` is always set.
 fn attachment(attachment_id: String) -> wisp.Response {
   case config.load() {
     Error(message) -> json_error("configuration_incomplete", message, 503)
@@ -735,10 +735,45 @@ fn attachment(attachment_id: String) -> wisp.Response {
         Ok(#(bits, content_type)) ->
           wisp.response(200)
           |> wisp.set_body(wisp.Bytes(bytes_tree.from_bit_array(bits)))
-          |> wisp.set_header("content-type", content_type)
+          |> set_headers(attachment_headers(content_type))
         Error(error) -> jira_error_response(error)
       }
   }
+}
+
+/// Response headers for attachment content. SVG is deliberately not inline:
+/// it can carry script when opened directly. Exposed for tests.
+pub fn attachment_headers(content_type: String) -> List(#(String, String)) {
+  let disposition = case is_inline_image(content_type) {
+    True -> []
+    False -> [#("content-disposition", "attachment")]
+  }
+  [
+    #("content-type", content_type),
+    #("x-content-type-options", "nosniff"),
+    ..disposition
+  ]
+}
+
+fn is_inline_image(content_type: String) -> Bool {
+  let mime = case string.split_once(content_type, ";") {
+    Ok(#(mime, _)) -> mime
+    Error(_) -> content_type
+  }
+  list.contains(
+    ["image/png", "image/jpeg", "image/gif", "image/webp"],
+    mime |> string.trim |> string.lowercase,
+  )
+}
+
+fn set_headers(
+  response: wisp.Response,
+  headers: List(#(String, String)),
+) -> wisp.Response {
+  list.fold(headers, response, fn(response, header) {
+    let #(name, value) = header
+    wisp.set_header(response, name, value)
+  })
 }
 
 /// Issue detail data for the UI panel: fetch

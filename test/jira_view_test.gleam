@@ -723,6 +723,36 @@ pub fn attachment_decoder_test() {
   )))
 }
 
+pub fn attachment_headers_test() {
+  // safe raster images may render inline
+  web.attachment_headers("image/png")
+  |> should.equal([
+    #("content-type", "image/png"),
+    #("x-content-type-options", "nosniff"),
+  ])
+
+  web.attachment_headers("image/png; charset=binary")
+  |> should.equal([
+    #("content-type", "image/png; charset=binary"),
+    #("x-content-type-options", "nosniff"),
+  ])
+
+  // HTML and SVG could run script on the app's origin: force a download
+  web.attachment_headers("text/html")
+  |> should.equal([
+    #("content-type", "text/html"),
+    #("x-content-type-options", "nosniff"),
+    #("content-disposition", "attachment"),
+  ])
+
+  web.attachment_headers("image/svg+xml")
+  |> should.equal([
+    #("content-type", "image/svg+xml"),
+    #("x-content-type-options", "nosniff"),
+    #("content-disposition", "attachment"),
+  ])
+}
+
 pub fn view_json_round_trip_test() {
   let view =
     types.ViewDef(

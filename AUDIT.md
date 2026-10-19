@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **10 / 19 decided, 10 / 19 repo changes done** (finding 1 still needs
+Progress: **11 / 19 decided, 11 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -199,7 +199,7 @@ a manual token rotation at Atlassian).
     maps to `413 too_many_issues` with a "narrow the JQL / smaller board"
     message. `search_page_query_test` updated; `gleam test`: 52 passed.
 
-- [ ] **11. The attachment proxy can run an attachment as the app**
+- [x] **11. The attachment proxy can run an attachment as the app**
   - **Files:** `src/jira_view/web.gleam:641-653`, `src/jira_view/jira.gleam:258-330`
   - **What:** The proxy passes Jira's `content-type` straight through and sets
     no `content-disposition` or `nosniff`.
@@ -212,7 +212,10 @@ a manual token rotation at Atlassian).
     everything else send `content-disposition: attachment`.
   - **If skipped:** A malicious attachment in a Jira issue becomes script in the
     app's origin.
-  - **Decision:** _pending_
+  - **Decision:** Safe inline whitelist. `attachment_headers` always sets
+    `x-content-type-options: nosniff`; only PNG/JPEG/GIF/WebP are inline, and
+    everything else (including SVG and HTML) gets `content-disposition:
+    attachment`. Header test covers all four cases. `gleam test`: 53 passed.
 
 - [ ] **12. ADF links accept `javascript:` URLs**
   - **Files:** `ui/src/jira_view_ui/adf_view.gleam:41-50`,
