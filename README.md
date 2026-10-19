@@ -35,5 +35,6 @@ comments and work log.
 ```sh
 gleam test                                  # Backend tests (Erlang target)
 (cd ui && gleam test --target javascript)   # Frontend tests (Node)
+npm --prefix ui install                     # once, for the frontend build
 ./build.sh                                  # Rebuild the ui/ bundle into assets/app.js
 ```

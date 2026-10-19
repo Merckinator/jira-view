@@ -4,5 +4,8 @@
   "type": "module",
   "dependencies": {
     "sortablejs": "^1.15.6"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

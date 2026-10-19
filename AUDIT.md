@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **15 / 19 decided, 15 / 19 repo changes done** (finding 1 still needs
+Progress: **16 / 19 decided, 16 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -276,7 +276,7 @@ a manual token rotation at Atlassian).
     stale-reply guards from finding 4 ignore them if the panel changed. UI
     tests: 16 passed; UI compiles.
 
-- [ ] **16. `./dev.sh` needs the network even though the bundle is committed**
+- [x] **16. `./dev.sh` needs the network even though the bundle is committed**
   - **Files:** `dev.sh:13`, `build.sh:8-14`
   - **What:** Every start runs `npx --yes esbuild`; esbuild is not in
     `ui/package.json`.
@@ -287,7 +287,11 @@ a manual token rotation at Atlassian).
     than the UI sources.
   - **If skipped:** Offline or deterministic startup can break on an unrelated
     npm download.
-  - **Decision:** _pending_
+  - **Decision:** Pinned `esbuild ^0.28.2` in `ui/devDependencies`. `build.sh`
+    uses the local binary, skips when `assets/app.js` is newer than the UI and
+    shared sources, and falls back to the committed bundle with a warning if
+    esbuild is missing. Verified rebuild, up-to-date skip, and missing-binary
+    fallback. Bundle rebuilt with all UI findings.
 
 ---
 
