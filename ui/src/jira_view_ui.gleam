@@ -3,8 +3,9 @@
 //// Phase 2: table + detail panel with ADF rendering. Phase 3: private
 //// drag-and-drop ordering (SortableJS + a keyed tbody; a drop reorders
 //// the model and PATCHes the full key list to /jira/views/:view/order)
-//// and keyboard navigation (j/k cursor, Shift+j/K relocate, Enter opens
-//// the detail in place of the list, Esc returns). Phase 4: optimistic
+//// and keyboard navigation (Tab into the table; j/k cursor, Shift+j/K
+//// relocate, Enter opens the detail in place of the list, Esc closes it and
+//// returns focus to the list). Phase 4: optimistic
 //// writes in the panel — transitions
 //// (status flips locally first), comments, work log; failures undo
 //// themselves by refetching. Phase 5: saved views — a picker over
@@ -122,6 +123,7 @@ pub type Msg {
   GotIssues(view_id: String, result: Result(List(Issue), String))
   FocusDown
   FocusUp
+  TableFocused
   RowDown
   RowUp
   Open
@@ -129,6 +131,7 @@ pub type Msg {
   OrderSaved(Result(Nil, String))
   Select(key: String)
   GotDetail(key: String, result: Result(IssueDetail, String))
+  Escape
   CloseDetail
   GotTransitions(key: String, result: Result(List(types.Transition), String))
   GotResolutions(Result(List(types.Resolution), String))
@@ -161,7 +164,7 @@ pub fn keyboard_bindings() -> List(#(String, Msg)) {
     #("J", RowDown),
     #("K", RowUp),
     #("Enter", Open),
-    #("Escape", CloseDetail),
+    #("Escape", Escape),
   ]
 }
 
@@ -395,6 +398,16 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       Model(..model, cursor: focus(model.state, model.cursor, False)),
       effect.none(),
     )
+    // Tab lands on the table: highlight the first row if nothing is focused,
+    // so Enter works immediately and the user can see where they are.
+    TableFocused ->
+      case model.cursor {
+        None -> #(
+          Model(..model, cursor: focus(model.state, None, True)),
+          effect.none(),
+        )
+        Some(_) -> #(model, effect.none())
+      }
     RowDown -> move_row(model, 1)
     RowUp -> move_row(model, -1)
     Open ->
@@ -454,12 +467,19 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           )
         False -> #(model, effect.none())
       }
-    CloseDetail -> #(
-      Model(..model, selected: None),
-      // The table was unmounted while the detail showed; re-attach drag and
-      // drop once Lustre has put the fresh tbody back.
-      sortable.attach(".jv-tbody", Dropped),
-    )
+    // Escape closes an open detail; otherwise it leaves whichever control has
+    // focus and returns to the list, where j/k/Enter work again. The view
+    // editor keeps its own controls, so there Escape stays a no-op.
+    Escape ->
+      case model.selected {
+        Some(_) -> close_detail(model)
+        None ->
+          case model.edit {
+            Some(_) -> #(model, effect.none())
+            None -> #(model, keyboard.focus_table())
+          }
+      }
+    CloseDetail -> close_detail(model)
     GotTransitions(key, Ok(transitions)) ->
       case is_selected(model, key) {
         True ->
@@ -858,6 +878,19 @@ fn decode_issues(
       }
     Error(message) -> GotIssues(view_id, Error(message))
   }
+}
+
+/// Close the detail and put keyboard focus back on the list. The table was
+/// unmounted while the detail showed, so drag-and-drop and the tab stop both
+/// have to be restored once Lustre renders it again.
+fn close_detail(model: Model) -> #(Model, Effect(Msg)) {
+  #(
+    Model(..model, selected: None),
+    effect.batch([
+      sortable.attach(".jv-tbody", Dropped),
+      keyboard.focus_table(),
+    ]),
+  )
 }
 
 fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
@@ -1613,21 +1646,30 @@ fn source_select(
 /// and unkeyed positional patching would visually scramble the order.
 /// Cells are keyed by column name, so column changes reuse nodes too.
 fn table(issues: List(Issue), columns: List(String), cursor: Option(Int)) -> Element(Msg) {
-  html.table([attribute.class("jv-table")], [
-    html.thead([], [
-      html.tr([], [
-        html.th([attribute.class("jv-col-grab")], [text("")]),
-        ..list.map(columns, head)
+  html.table(
+    [
+      attribute.class("jv-table"),
+      // One tab stop for the whole list; j/k drive the cursor inside it.
+      attribute.tabindex(0),
+      attribute.aria_label("Issues"),
+      event.on_focus(TableFocused),
+    ],
+    [
+      html.thead([], [
+        html.tr([], [
+          html.th([attribute.class("jv-col-grab")], [text("")]),
+          ..list.map(columns, head)
+        ]),
       ]),
-    ]),
-    keyed.element(
-      "tbody",
-      [attribute.class("jv-tbody")],
-      list.index_map(issues, fn(issue, index) {
-        #(issue.key, row(issue, index, cursor, columns))
-      }),
-    ),
-  ])
+      keyed.element(
+        "tbody",
+        [attribute.class("jv-tbody")],
+        list.index_map(issues, fn(issue, index) {
+          #(issue.key, row(issue, index, cursor, columns))
+        }),
+      ),
+    ],
+  )
 }
 
 fn head(column: String) -> Element(Msg) {

@@ -99,6 +99,32 @@ pub fn focus_moves_and_clamps_test() {
   |> should.equal(Some(0))
 }
 
+pub fn table_focus_starts_at_the_first_row_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: None,
+      state: jira_view_ui.Ready(sample_issues()),
+      cursor: None,
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.TableFocused)
+  next.cursor
+  |> should.equal(Some(0))
+}
+
+pub fn table_focus_keeps_the_existing_cursor_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: None,
+      state: jira_view_ui.Ready(sample_issues()),
+      cursor: Some(2),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.TableFocused)
+  next.cursor
+  |> should.equal(Some(2))
+}
+
 // ————— stale replies —————
 
 fn test_model() -> jira_view_ui.Model {
@@ -182,10 +208,10 @@ pub fn matching_view_reply_is_applied_test() {
 
 // ————— detail navigation —————
 
-pub fn escape_is_bound_to_close_detail_test() {
+pub fn escape_is_bound_to_escape_test() {
   jira_view_ui.keyboard_bindings()
   |> list.key_find("Escape")
-  |> should.equal(Ok(jira_view_ui.CloseDetail))
+  |> should.equal(Ok(jira_view_ui.Escape))
 }
 
 pub fn close_detail_returns_to_the_list_test() {
@@ -200,6 +226,55 @@ pub fn close_detail_returns_to_the_list_test() {
   |> should.equal(None)
   next.cursor
   |> should.equal(Some(1))
+}
+
+pub fn escape_closes_the_detail_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready(sample_issues()),
+      cursor: Some(1),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.Escape)
+  next.selected
+  |> should.equal(None)
+  next.cursor
+  |> should.equal(Some(1))
+}
+
+pub fn escape_without_detail_keeps_the_list_cursor_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: None,
+      state: jira_view_ui.Ready(sample_issues()),
+      cursor: Some(2),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.Escape)
+  next.selected
+  |> should.equal(None)
+  next.cursor
+  |> should.equal(Some(2))
+}
+
+pub fn escape_keeps_the_view_editor_open_test() {
+  let form =
+    jira_view_ui.EditForm(
+      id: Some("v"),
+      name: "V",
+      source: types.Jql("project = X"),
+      columns: ["key"],
+      confirm_delete: False,
+    )
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: None,
+      edit: Some(form),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.Escape)
+  next.edit
+  |> should.equal(Some(form))
 }
 
 pub fn enter_is_ignored_while_detail_is_open_test() {

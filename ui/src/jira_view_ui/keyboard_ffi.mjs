@@ -3,9 +3,9 @@
 // Attached exactly once (module flag survives app restarts/HMR); targets
 // that take free-form input or activate on Enter (inputs, buttons, links) are
 // skipped so typing and keyboard activation are never hijacked. Escape is the
-// exception: it must still close the detail from those controls. `combos` is
-// the whitelist — anything not on it is ignored, so update only ever hears
-// keys it asked for.
+// exception: it must still close the detail from those controls, and with no
+// detail open it returns focus to the list. `combos` is the whitelist —
+// anything not on it is ignored, so update only ever hears keys it asked for.
 export function attach_keys(combos, on_key) {
   if (window.__jira_view_keys_attached) return;
   window.__jira_view_keys_attached = true;
@@ -35,4 +35,12 @@ export function attach_keys(combos, on_key) {
     event.preventDefault();
     on_key(event.key);
   });
+}
+
+// Focus the issues table without scrolling away from the cursor. The table is
+// the list's single tab stop; once focused, j/k/Enter reach the document-level
+// handler again (it ignores controls, but the table is not one).
+export function focus_table() {
+  const table = document.querySelector(".jv-table");
+  if (table) table.focus({ preventScroll: true });
 }
