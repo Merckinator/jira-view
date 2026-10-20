@@ -2,6 +2,7 @@ build/
 tmp/
 *.db
 node_modules/
+.playwright-mcp/
 
 # Secrets
 .env

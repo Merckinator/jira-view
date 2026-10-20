@@ -1,7 +1,0 @@
-- generic [ref=e3]:
-  - generic [ref=e4]:
-    - heading "My issues" [level=1] [ref=e5]
-    - generic [ref=e6]:
-      - textbox [ref=e7]: assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC
-      - button "Refresh" [ref=e8] [cursor=pointer]
-  - paragraph [ref=e9]: "Error: undefined"

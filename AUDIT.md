@@ -371,12 +371,11 @@ Two smaller UI polish items, deliberately not part of the 19:
 
 ## Lean
 
-Removed the write-only issue cache (about 100 lines and one table). Still
-possible: `-14` tracked Playwright log/snapshot files (about 156 KB). No unused
+Removed the write-only issue cache (about 100 lines and one table) and the 14
+tracked Playwright debug artifacts (156 KB, now ignored). No unused
 dependencies found.
 
 ## Verdict
 
 All 19 findings are implemented and committed. The only required manual step is
-rotating the Jira token at Atlassian. Optional cleanups: delete the tracked
-Playwright debug files and do a live transition smoke test.
+rotating the Jira token at Atlassian. Optional: do a live transition smoke test.
