@@ -349,20 +349,34 @@ Two smaller UI polish items, deliberately not part of the 19:
 - Pending comments use `drop_first`, so two comments sent quickly can remove
   the wrong "sending…" line (the actual comment still goes to the right issue).
 
+## Final verification
+
+- Backend: `gleam test` → **54 passed**.
+- Frontend: `(cd ui && gleam test --target javascript)` → **16 passed**.
+- `./build.sh` → bundle rebuilt after the UI findings, then reported up to date.
+- Boot smoke test on `127.0.0.1:8802`: `/` → 303, index → 200, bundle → 200,
+  `/jira/views` → 200, foreign `Host` → 400, `/jira/resolutions` → 502 with
+  dummy credentials.
+
 ## Not checked
 
-- Browser UI end-to-end. `ui/src` and the FFI were read, not run.
-- Live Jira calls. Decoders were judged from code and captured-payload tests.
-- Vendored `build/packages` and minified `assets/app.js`.
-- Concurrent requests and DNS rebinding in a real browser.
+- Live Jira calls/writes. The resolution endpoint and the transition POST are
+  covered by decoders and unit tests, not a live request. Do one real
+  transition (including a non-Done resolution) before relying on it.
+- Browser click-through. The UI logic is unit-tested and the bundle is rebuilt,
+  but nobody has clicked through it since the changes.
+- Vendored `build/packages` and the minified `assets/app.js`.
+- Concurrent-request stress. Order saves are transactional, but no load test
+  was run.
 
 ## Lean
 
-`-14` tracked Playwright log/snapshot files (about 156 KB, including untracked
-ones) and `-~90` lines if the write-only issue cache is deleted. No unused
+Removed the write-only issue cache (about 100 lines and one table). Still
+possible: `-14` tracked Playwright log/snapshot files (about 156 KB). No unused
 dependencies found.
 
 ## Verdict
 
-The bones are good: small modules, clear proxy, good backend tests. Fix 1–5
-first. Then decide whether the issue cache is a feature or should be deleted.
+All 19 findings are implemented and committed. The only required manual step is
+rotating the Jira token at Atlassian. Optional cleanups: delete the tracked
+Playwright debug files and do a live transition smoke test.
