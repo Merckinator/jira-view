@@ -178,6 +178,40 @@ pub fn matching_view_reply_is_applied_test() {
   |> should.equal(jira_view_ui.Ready([]))
 }
 
+// ————— detail navigation —————
+
+pub fn escape_is_bound_to_close_detail_test() {
+  jira_view_ui.keyboard_bindings()
+  |> list.key_find("Escape")
+  |> should.equal(Ok(jira_view_ui.CloseDetail))
+}
+
+pub fn close_detail_returns_to_the_list_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready(sample_issues()),
+      cursor: Some(1),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.CloseDetail)
+  next.selected
+  |> should.equal(None)
+  next.cursor
+  |> should.equal(Some(1))
+}
+
+pub fn enter_is_ignored_while_detail_is_open_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready(sample_issues()),
+      cursor: Some(0),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.Open)
+  next.selected
+  |> should.equal(Some(jira_view_ui.DetailLoading("B")))
+}
+
 // ————— resolution picker —————
 
 pub fn resolution_defaults_to_done_test() {

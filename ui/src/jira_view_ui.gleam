@@ -4,7 +4,8 @@
 //// drag-and-drop ordering (SortableJS + a keyed tbody; a drop reorders
 //// the model and PATCHes the full key list to /jira/views/:view/order)
 //// and keyboard navigation (j/k cursor, Shift+j/K relocate, Enter opens
-//// the detail). Phase 4: optimistic writes in the panel — transitions
+//// the detail in place of the list, Esc returns). Phase 4: optimistic
+//// writes in the panel — transitions
 //// (status flips locally first), comments, work log; failures undo
 //// themselves by refetching. Phase 5: saved views — a picker over
 //// GET /jira/views (each with its own source: JQL or a board's active
@@ -155,6 +156,7 @@ pub fn keyboard_bindings() -> List(#(String, Msg)) {
     #("J", RowDown),
     #("K", RowUp),
     #("Enter", Open),
+    #("Escape", CloseDetail),
   ]
 }
 
@@ -390,13 +392,18 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     RowDown -> move_row(model, 1)
     RowUp -> move_row(model, -1)
     Open ->
-      case model.state, model.cursor {
-        Ready(issues), Some(index) ->
-          case item_at(issues, index) {
-            Ok(issue) -> open_detail(model, issue.key)
-            Error(Nil) -> #(model, effect.none())
+      // The list is hidden while a detail is open; Enter belongs to the list.
+      case model.selected {
+        Some(_) -> #(model, effect.none())
+        None ->
+          case model.state, model.cursor {
+            Ready(issues), Some(index) ->
+              case item_at(issues, index) {
+                Ok(issue) -> open_detail(model, issue.key)
+                Error(Nil) -> #(model, effect.none())
+              }
+            _, _ -> #(model, effect.none())
           }
-        _, _ -> #(model, effect.none())
       }
     Dropped(from, to) ->
       case model.state {
@@ -441,7 +448,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           )
         False -> #(model, effect.none())
       }
-    CloseDetail -> #(Model(..model, selected: None), effect.none())
+    CloseDetail -> #(
+      Model(..model, selected: None),
+      // The table was unmounted while the detail showed; re-attach drag and
+      // drop once Lustre has put the fresh tbody back.
+      sortable.attach(".jv-tbody", Dropped),
+    )
     GotTransitions(key, Ok(transitions)) ->
       case is_selected(model, key) {
         True ->
@@ -1147,8 +1159,19 @@ fn append_worklog(
 // ————— view —————
 
 pub fn view(model: Model) -> Element(Msg) {
-  html.div([attribute.class("jv")], [
-    html.div([attribute.class("jv-toolbar")], toolbar(model)),
+  html.div([attribute.class("jv")], list.flatten([
+    [html.div([attribute.class("jv-toolbar")], toolbar(model))],
+    case model.selected {
+      Some(detail) -> [detail_panel(model, detail)]
+      None -> list_view(model)
+    },
+  ]))
+}
+
+/// The list area — order/edit/loading/error/table. It is replaced wholesale by
+/// the detail panel while an issue is open.
+fn list_view(model: Model) -> List(Element(Msg)) {
+  [
     case model.order_error {
       Some(message) ->
         html.p([attribute.class("jv-order-error")], [
@@ -1174,11 +1197,7 @@ pub fn view(model: Model) -> Element(Msg) {
           _ -> table(issues, columns_of(model), model.cursor)
         }
     },
-    case model.selected {
-      Some(detail) -> detail_panel(model, detail)
-      None -> element.none()
-    },
-  ])
+  ]
 }
 
 fn columns_of(model: Model) -> List(String) {

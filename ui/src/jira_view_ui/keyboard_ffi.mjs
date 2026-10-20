@@ -2,7 +2,8 @@
 //
 // Attached exactly once (module flag survives app restarts/HMR); targets
 // that take free-form input or activate on Enter (inputs, buttons, links) are
-// skipped so typing and keyboard activation are never hijacked. `combos` is
+// skipped so typing and keyboard activation are never hijacked. Escape is the
+// exception: it must still close the detail from those controls. `combos` is
 // the whitelist — anything not on it is ignored, so update only ever hears
 // keys it asked for.
 export function attach_keys(combos, on_key) {
@@ -25,7 +26,10 @@ export function attach_keys(combos, on_key) {
       target.closest(
         "input, textarea, select, button, a, [contenteditable='true'], [role='button']",
       );
-    if (interactive || (target && target.isContentEditable)) {
+    if (
+      event.key !== "Escape" &&
+      (interactive || (target && target.isContentEditable))
+    ) {
       return;
     }
     event.preventDefault();

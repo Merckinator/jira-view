@@ -21,7 +21,8 @@ comments and work log.
   `view_issues` table on every drop and re-applied over Jira's sort on the
   next fetch (new issues append at the end).
 - Keyboard: `j`/`k` move the focus cursor, `Shift+j`/`Shift+k` relocate the
-  focused row, `Enter` opens its detail panel.
+  focused row, `Enter` opens its detail in place of the list, `Esc` returns
+  to the list.
 - Views: pick in the toolbar, `+ New view` to create, `Edit` to rename /
   re-source (JQL or a board's issues) / choose columns / delete. The JQL box
   + Refresh run the edited query without saving it — saving is explicit.
