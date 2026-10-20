@@ -76,19 +76,11 @@ pub fn safe_link(href: String) -> Bool {
 /// plain text. Newlines stay as-is (single paragraph) — good enough for the
 /// short comments this app writes.
 pub fn paragraph_document(text: String) -> AdfNode {
-  AdfNode(
-    kind: "doc",
-    text: "",
-    marks: [],
-    content: [
-      AdfNode(
-        kind: "paragraph",
-        text: "",
-        marks: [],
-        content: [AdfNode(kind: "text", text: text, marks: [], content: [])],
-      ),
-    ],
-  )
+  AdfNode(kind: "doc", text: "", marks: [], content: [
+    AdfNode(kind: "paragraph", text: "", marks: [], content: [
+      AdfNode(kind: "text", text: text, marks: [], content: []),
+    ]),
+  ])
 }
 
 /// Encode back to ADF JSON. `doc` nodes carry `"version": 1` (Jira rejects

@@ -65,7 +65,11 @@ pub fn move_item_out_of_range_test() {
 }
 
 pub fn insert_at_test() {
-  ordering.insert_at([sample_issue("A"), sample_issue("B")], 1, sample_issue("X"))
+  ordering.insert_at(
+    [sample_issue("A"), sample_issue("B")],
+    1,
+    sample_issue("X"),
+  )
   |> keys
   |> should.equal(["A", "X", "B"])
 }
@@ -130,12 +134,14 @@ pub fn table_focus_keeps_the_existing_cursor_test() {
 fn test_model() -> jira_view_ui.Model {
   jira_view_ui.Model(
     views: jira_view_ui.ViewsLoaded([]),
-    current_view: Some(types.ViewDef(
-      id: "v",
-      name: "V",
-      source: types.Jql("project = X"),
-      columns: ["key"],
-    )),
+    current_view: Some(
+      types.ViewDef(
+        id: "v",
+        name: "V",
+        source: types.Jql("project = X"),
+        columns: ["key"],
+      ),
+    ),
     boards: None,
     edit: None,
     view_error: None,
@@ -178,30 +184,21 @@ pub fn matching_detail_reply_is_applied_test() {
 
 pub fn stale_transitions_reply_is_ignored_test() {
   let #(next, _) =
-    jira_view_ui.update(
-      test_model(),
-      jira_view_ui.GotTransitions("A", Ok([])),
-    )
+    jira_view_ui.update(test_model(), jira_view_ui.GotTransitions("A", Ok([])))
   next.transitions
   |> should.equal(None)
 }
 
 pub fn stale_view_reply_is_ignored_test() {
   let #(next, _) =
-    jira_view_ui.update(
-      test_model(),
-      jira_view_ui.GotIssues("other", Ok([])),
-    )
+    jira_view_ui.update(test_model(), jira_view_ui.GotIssues("other", Ok([])))
   next.state
   |> should.equal(jira_view_ui.Loading)
 }
 
 pub fn matching_view_reply_is_applied_test() {
   let #(next, _) =
-    jira_view_ui.update(
-      test_model(),
-      jira_view_ui.GotIssues("v", Ok([])),
-    )
+    jira_view_ui.update(test_model(), jira_view_ui.GotIssues("v", Ok([])))
   next.state
   |> should.equal(jira_view_ui.Ready([]))
 }
@@ -267,11 +264,7 @@ pub fn escape_keeps_the_view_editor_open_test() {
       confirm_delete: False,
     )
   let model =
-    jira_view_ui.Model(
-      ..test_model(),
-      selected: None,
-      edit: Some(form),
-    )
+    jira_view_ui.Model(..test_model(), selected: None, edit: Some(form))
   let #(next, _) = jira_view_ui.update(model, jira_view_ui.Escape)
   next.edit
   |> should.equal(Some(form))
@@ -295,10 +288,12 @@ pub fn resolution_defaults_to_done_test() {
   let #(next, _) =
     jira_view_ui.update(
       test_model(),
-      jira_view_ui.GotResolutions(Ok([
-        types.Resolution("1", "Won't Do"),
-        types.Resolution("2", "Done"),
-      ])),
+      jira_view_ui.GotResolutions(
+        Ok([
+          types.Resolution("1", "Won't Do"),
+          types.Resolution("2", "Done"),
+        ]),
+      ),
     )
   next.resolution_draft |> should.equal("Done")
 }
@@ -333,25 +328,29 @@ pub fn delete_requires_two_clicks_test() {
     )
   let #(next, _) = jira_view_ui.update(model, jira_view_ui.DeleteView)
   next.edit
-  |> should.equal(Some(jira_view_ui.EditForm(
-    id: Some("v"),
-    name: "V",
-    source: types.Jql("project = X"),
-    columns: ["key"],
-    confirm_delete: True,
-  )))
+  |> should.equal(
+    Some(jira_view_ui.EditForm(
+      id: Some("v"),
+      name: "V",
+      source: types.Jql("project = X"),
+      columns: ["key"],
+      confirm_delete: True,
+    )),
+  )
 }
 
 // ————— labels —————
 
 fn loaded_detail(key: String, labels: List(String)) -> jira_view_ui.Detail {
-  jira_view_ui.DetailLoaded(types.IssueDetail(
-    issue: types.Issue(..sample_issue(key), labels: labels),
-    description: [],
-    comments: [],
-    worklog: [],
-    attachments: [],
-  ))
+  jira_view_ui.DetailLoaded(
+    types.IssueDetail(
+      issue: types.Issue(..sample_issue(key), labels: labels),
+      description: [],
+      comments: [],
+      worklog: [],
+      attachments: [],
+    ),
+  )
 }
 
 pub fn add_label_updates_detail_and_row_test() {
@@ -380,7 +379,8 @@ pub fn remove_label_updates_detail_and_row_test() {
       state: jira_view_ui.Ready([sample_issue("B")]),
       selected: Some(loaded_detail("B", ["urgent", "docs"])),
     )
-  let #(next, _) = jira_view_ui.update(model, jira_view_ui.RemoveLabel("urgent"))
+  let #(next, _) =
+    jira_view_ui.update(model, jira_view_ui.RemoveLabel("urgent"))
 
   let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
   info.issue.labels |> should.equal(["docs"])

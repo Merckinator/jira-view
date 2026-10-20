@@ -18,15 +18,12 @@ fn focus_table_ffi() -> Nil
 
 pub fn attach(bindings: List(#(String, msg))) -> Effect(msg) {
   effect.from(fn(dispatch) {
-    attach_keys_ffi(
-      list.map(bindings, fn(binding) { binding.0 }),
-      fn(key) {
-        case list.key_find(bindings, key) {
-          Ok(msg) -> dispatch(msg)
-          Error(_) -> Nil
-        }
-      },
-    )
+    attach_keys_ffi(list.map(bindings, fn(binding) { binding.0 }), fn(key) {
+      case list.key_find(bindings, key) {
+        Ok(msg) -> dispatch(msg)
+        Error(_) -> Nil
+      }
+    })
   })
 }
 

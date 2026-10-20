@@ -169,29 +169,35 @@ fn sample_issue(
 
 pub fn merge_view_order_empty_test() {
   // No saved order yet: Jira's order passes through untouched.
-  db.merge_view_order([], [sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")])
-  |> should.equal([sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")])
+  db.merge_view_order([], [
+    sample_issue("KAN-1", "One", ""),
+    sample_issue("KAN-2", "Two", ""),
+  ])
+  |> should.equal([
+    sample_issue("KAN-1", "One", ""),
+    sample_issue("KAN-2", "Two", ""),
+  ])
 }
 
 pub fn merge_view_order_saved_order_wins_test() {
-  db.merge_view_order(
-    ["KAN-2", "KAN-1"],
-    [sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")],
-  )
-  |> should.equal([sample_issue("KAN-2", "Two", ""), sample_issue("KAN-1", "One", "")])
+  db.merge_view_order(["KAN-2", "KAN-1"], [
+    sample_issue("KAN-1", "One", ""),
+    sample_issue("KAN-2", "Two", ""),
+  ])
+  |> should.equal([
+    sample_issue("KAN-2", "Two", ""),
+    sample_issue("KAN-1", "One", ""),
+  ])
 }
 
 pub fn merge_view_order_appends_new_issues_test() {
   // KAN-3 was never part of the saved order -> appended at the end,
   // in Jira's order, after every ordered row.
-  db.merge_view_order(
-    ["KAN-2", "KAN-1"],
-    [
-      sample_issue("KAN-3", "New", ""),
-      sample_issue("KAN-1", "One", ""),
-      sample_issue("KAN-2", "Two", ""),
-    ],
-  )
+  db.merge_view_order(["KAN-2", "KAN-1"], [
+    sample_issue("KAN-3", "New", ""),
+    sample_issue("KAN-1", "One", ""),
+    sample_issue("KAN-2", "Two", ""),
+  ])
   |> should.equal([
     sample_issue("KAN-2", "Two", ""),
     sample_issue("KAN-1", "One", ""),
@@ -203,10 +209,10 @@ pub fn merge_view_order_drops_stale_keys_test() {
   // A saved key that no longer matches the JQL result (resolved, moved
   // projects, …) is simply not rendered; ordering rows stay until the next
   // save rewrites them.
-  db.merge_view_order(
-    ["KAN-9", "KAN-1"],
-    [sample_issue("KAN-1", "One", ""), sample_issue("KAN-2", "Two", "")],
-  )
+  db.merge_view_order(["KAN-9", "KAN-1"], [
+    sample_issue("KAN-1", "One", ""),
+    sample_issue("KAN-2", "Two", ""),
+  ])
   |> should.equal([
     sample_issue("KAN-1", "One", ""),
     sample_issue("KAN-2", "Two", ""),
@@ -216,10 +222,10 @@ pub fn merge_view_order_drops_stale_keys_test() {
 pub fn merge_view_order_keeps_fresh_values_test() {
   // Ordered rows come from the fresh fetch, so edits made after the drop
   // (new summary/status) still show through the saved order.
-  db.merge_view_order(
-    ["KAN-1", "KAN-2"],
-    [sample_issue("KAN-1", "One (edited)", ""), sample_issue("KAN-2", "Two", "")],
-  )
+  db.merge_view_order(["KAN-1", "KAN-2"], [
+    sample_issue("KAN-1", "One (edited)", ""),
+    sample_issue("KAN-2", "Two", ""),
+  ])
   |> should.equal([
     sample_issue("KAN-1", "One (edited)", ""),
     sample_issue("KAN-2", "Two", ""),
@@ -374,18 +380,22 @@ pub fn jira_comment_decoder_capture_test() {
     "{\"id\":\"10000\",\"author\":{\"accountId\":\"5a67cc62cc9f657ed59d22da\",\"displayName\":\"Jeffery Merckens\",\"active\":true},\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Captured comment shape\"}]}]},\"created\":\"2026-10-18T19:38:02.298-0400\",\"updated\":\"2026-10-18T19:38:02.298-0400\",\"jsdPublic\":true}",
     types.jira_comment_decoder(),
   )
-  |> should.equal(Ok(types.Comment(
-    author: "Jeffery Merckens",
-    created: "2026-10-18T19:38:02.298-0400",
-    body: [
-      adf.AdfNode(
-        "paragraph",
-        "",
-        [adf.AdfNode("text", "Captured comment shape", [], [])],
-        [],
+  |> should.equal(
+    Ok(
+      types.Comment(
+        author: "Jeffery Merckens",
+        created: "2026-10-18T19:38:02.298-0400",
+        body: [
+          adf.AdfNode(
+            "paragraph",
+            "",
+            [adf.AdfNode("text", "Captured comment shape", [], [])],
+            [],
+          ),
+        ],
       ),
-    ],
-  )))
+    ),
+  )
 }
 
 pub fn jira_comment_decoder_absent_body_test() {
@@ -400,12 +410,16 @@ pub fn jira_worklog_decoder_capture_test() {
     "{\"id\":\"10000\",\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\",\"timeSpentSeconds\":1500}",
     types.jira_worklog_decoder(),
   )
-  |> should.equal(Ok(types.WorklogEntry(
-    author: "Jeffery Merckens",
-    started: "2026-10-18T23:38:02.298+0000",
-    time_spent: "25m",
-    body: [],
-  )))
+  |> should.equal(
+    Ok(
+      types.WorklogEntry(
+        author: "Jeffery Merckens",
+        started: "2026-10-18T23:38:02.298+0000",
+        time_spent: "25m",
+        body: [],
+      ),
+    ),
+  )
 }
 
 pub fn issue_detail_decoder_with_embeds_test() {
@@ -415,36 +429,45 @@ pub fn issue_detail_decoder_with_embeds_test() {
     "{\"id\":\"10013\",\"key\":\"SAM1-11\",\"fields\":{\"summary\":\"Phase 4 verification\",\"labels\":[\"phase-4\"],\"status\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"updated\":\"2026-10-18\",\"description\":null,\"comment\":{\"comments\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"created\":\"2026-10-18T19:38:02.298-0400\",\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"c1\"}]}]}}],\"total\":1},\"worklog\":{\"worklogs\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\"}],\"total\":1}}}",
     types.issue_detail_decoder(),
   )
-  |> should.equal(Ok(types.IssueDetail(
-    issue: types.Issue(
-      key: "SAM1-11",
-      id: "10013",
-      summary: "Phase 4 verification",
-      status: types.Status("Done", "done"),
-      assignee: None,
-      labels: ["phase-4"],
-      updated: "2026-10-18",
-    ),
-    description: [],
-    comments: [
-      types.Comment(
-        author: "Jeffery Merckens",
-        created: "2026-10-18T19:38:02.298-0400",
-        body: [
-          adf.AdfNode("paragraph", "", [adf.AdfNode("text", "c1", [], [])], []),
+  |> should.equal(
+    Ok(
+      types.IssueDetail(
+        issue: types.Issue(
+          key: "SAM1-11",
+          id: "10013",
+          summary: "Phase 4 verification",
+          status: types.Status("Done", "done"),
+          assignee: None,
+          labels: ["phase-4"],
+          updated: "2026-10-18",
+        ),
+        description: [],
+        comments: [
+          types.Comment(
+            author: "Jeffery Merckens",
+            created: "2026-10-18T19:38:02.298-0400",
+            body: [
+              adf.AdfNode(
+                "paragraph",
+                "",
+                [adf.AdfNode("text", "c1", [], [])],
+                [],
+              ),
+            ],
+          ),
         ],
+        worklog: [
+          types.WorklogEntry(
+            author: "Jeffery Merckens",
+            started: "2026-10-18T23:38:02.298+0000",
+            time_spent: "25m",
+            body: [],
+          ),
+        ],
+        attachments: [],
       ),
-    ],
-    worklog: [
-      types.WorklogEntry(
-        author: "Jeffery Merckens",
-        started: "2026-10-18T23:38:02.298+0000",
-        time_spent: "25m",
-        body: [],
-      ),
-    ],
-    attachments: [],
-  )))
+    ),
+  )
 }
 
 // Phase 4: transitions metadata + the POST body this app builds
@@ -456,10 +479,12 @@ pub fn jira_transitions_decoder_capture_test() {
     "{\"expand\":\"transitions\",\"transitions\":[{\"id\":\"11\",\"name\":\"To Do\",\"to\":{\"name\":\"To Do\",\"statusCategory\":{\"key\":\"new\"}},\"hasScreen\":false,\"isGlobal\":true,\"isConditional\":false},{\"id\":\"41\",\"name\":\"Done\",\"to\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"isLooped\":false}]}",
     types.jira_transitions_decoder(),
   )
-  |> should.equal(Ok([
-    types.Transition("11", "To Do", "To Do", []),
-    types.Transition("41", "Done", "Done", []),
-  ]))
+  |> should.equal(
+    Ok([
+      types.Transition("11", "To Do", "To Do", []),
+      types.Transition("41", "Done", "Done", []),
+    ]),
+  )
 }
 
 pub fn transition_with_required_resolution_test() {
@@ -468,14 +493,14 @@ pub fn transition_with_required_resolution_test() {
     "{\"transitions\":[{\"id\":\"31\",\"name\":\"Done\",\"to\":{\"name\":\"Done\"},\"fields\":[{\"required\":true,\"name\":\"Resolution\",\"key\":\"resolution\"},{\"required\":false,\"key\":\"comment\"}]}]}",
     types.jira_transitions_decoder(),
   )
-  |> should.equal(Ok([
-    types.Transition(
-      "31",
-      "Done",
-      "Done",
-      [types.TransitionField("resolution", True), types.TransitionField("comment", False)],
-    ),
-  ]))
+  |> should.equal(
+    Ok([
+      types.Transition("31", "Done", "Done", [
+        types.TransitionField("resolution", True),
+        types.TransitionField("comment", False),
+      ]),
+    ]),
+  )
 
   let assert Ok([transition]) =
     json.parse(
@@ -515,10 +540,12 @@ pub fn resolutions_decoder_test() {
     "[{\"id\":\"1\",\"name\":\"Done\",\"description\":\"Work is complete\"},{\"id\":\"2\",\"name\":\"Won't Do\",\"description\":\"Not planned\"}]",
     types.resolutions_decoder(),
   )
-  |> should.equal(Ok([
-    types.Resolution("1", "Done"),
-    types.Resolution("2", "Won't Do"),
-  ]))
+  |> should.equal(
+    Ok([
+      types.Resolution("1", "Done"),
+      types.Resolution("2", "Won't Do"),
+    ]),
+  )
 }
 
 // Phase 4: write request bodies + routes
@@ -527,9 +554,7 @@ pub fn parse_write_bodies_test() {
   web.parse_transition_body("{\"id\": \"41\"}")
   |> should.equal(Ok(#("41", None)))
 
-  web.parse_transition_body(
-    "{\"id\": \"41\", \"resolution\": \"Duplicate\"}",
-  )
+  web.parse_transition_body("{\"id\": \"41\", \"resolution\": \"Duplicate\"}")
   |> should.equal(Ok(#("41", Some("Duplicate"))))
 
   web.parse_transition_body("{\"transition\": {}}")
@@ -704,8 +729,7 @@ pub fn db_view_crud_round_trip_test() {
   |> should.equal(Error(db.NotFound))
 
   // deletion cascades to the private ordering rows
-  let assert Ok(_) =
-    db.save_view_order(conn, "q3-sprint", ["KAN-2", "KAN-1"])
+  let assert Ok(_) = db.save_view_order(conn, "q3-sprint", ["KAN-2", "KAN-1"])
   db.delete_view(conn, "q3-sprint") |> should.be_ok
   db.get_view(conn, "q3-sprint") |> should.equal(Error(db.NotFound))
   db.load_view_order(conn, "q3-sprint")
@@ -725,22 +749,28 @@ pub fn unique_view_id_test() {
   |> should.equal("view")
 
   let assert Ok(_) =
-    db.create_view(conn, types.ViewDef(
-      id: "q3-sprint",
-      name: "Q3 Sprint",
-      source: types.Board(1),
-      columns: db.default_columns(),
-    ))
+    db.create_view(
+      conn,
+      types.ViewDef(
+        id: "q3-sprint",
+        name: "Q3 Sprint",
+        source: types.Board(1),
+        columns: db.default_columns(),
+      ),
+    )
   db.unique_view_id(conn, "Q3 Sprint?")
   |> should.equal("q3-sprint-2")
 
   let assert Ok(_) =
-    db.create_view(conn, types.ViewDef(
-      id: "q3-sprint-2",
-      name: "Q3 Sprint2",
-      source: types.Board(2),
-      columns: db.default_columns(),
-    ))
+    db.create_view(
+      conn,
+      types.ViewDef(
+        id: "q3-sprint-2",
+        name: "Q3 Sprint2",
+        source: types.Board(2),
+        columns: db.default_columns(),
+      ),
+    )
   db.unique_view_id(conn, "Q3 Sprint")
   |> should.equal("q3-sprint-3")
 }
@@ -752,13 +782,15 @@ pub fn boards_page_decoder_test() {
     "{\"maxResults\":50,\"startAt\":0,\"total\":2,\"values\":[{\"id\":1,\"name\":\"SAM board\",\"type\":\"scrum\",\"location\":{}},{\"id\":2,\"name\":\"KAN board\",\"type\":\"kanban\"}]}",
     types.boards_page_decoder(),
   )
-  |> should.equal(Ok(#(
-    [
-      types.AgileBoard(1, "SAM board", "scrum"),
-      types.AgileBoard(2, "KAN board", "kanban"),
-    ],
-    2,
-  )))
+  |> should.equal(
+    Ok(#(
+      [
+        types.AgileBoard(1, "SAM board", "scrum"),
+        types.AgileBoard(2, "KAN board", "kanban"),
+      ],
+      2,
+    )),
+  )
 }
 
 pub fn agile_page_decoder_test() {
@@ -766,20 +798,22 @@ pub fn agile_page_decoder_test() {
     "{\"startAt\":0,\"maxResults\":100,\"total\":1,\"issues\":[{\"id\":\"10011\",\"key\":\"KAN-2\",\"fields\":{\"summary\":\"Task 2\",\"status\":{\"name\":\"In Progress\",\"statusCategory\":{\"key\":\"indeterminate\"}},\"updated\":\"2026-10-18\"}}]}",
     types.agile_page_decoder(),
   )
-  |> should.equal(Ok(#(
-    [
-      types.Issue(
-        key: "KAN-2",
-        id: "10011",
-        summary: "Task 2",
-        status: types.Status("In Progress", "indeterminate"),
-        assignee: None,
-        labels: [],
-        updated: "2026-10-18",
-      ),
-    ],
-    1,
-  )))
+  |> should.equal(
+    Ok(#(
+      [
+        types.Issue(
+          key: "KAN-2",
+          id: "10011",
+          summary: "Task 2",
+          status: types.Status("In Progress", "indeterminate"),
+          assignee: None,
+          labels: [],
+          updated: "2026-10-18",
+        ),
+      ],
+      1,
+    )),
+  )
 }
 
 pub fn attachment_decoder_test() {
@@ -787,12 +821,14 @@ pub fn attachment_decoder_test() {
     "{\"id\":\"10001\",\"filename\":\"screenshot.png\",\"mimeType\":\"image/png\",\"size\":2048,\"created\":\"2026\",\"content\":\"https://x\"}",
     types.attachment_decoder(),
   )
-  |> should.equal(Ok(types.Attachment(
-    id: "10001",
-    filename: "screenshot.png",
-    mime_type: "image/png",
-    size: 2048,
-  )))
+  |> should.equal(
+    Ok(types.Attachment(
+      id: "10001",
+      filename: "screenshot.png",
+      mime_type: "image/png",
+      size: 2048,
+    )),
+  )
 }
 
 pub fn attachment_headers_test() {
@@ -862,9 +898,11 @@ pub fn views_list_seeded_route_test() {
 
   let assert Ok(views) =
     simulate.read_body(resp)
-    |> json.parse(
-      decode.field("views", decode.list(types.app_view_decoder()), decode.success),
-    )
+    |> json.parse(decode.field(
+      "views",
+      decode.list(types.app_view_decoder()),
+      decode.success,
+    ))
   // the seeded default view always exists
   list.any(views, fn(view) { view.id == "my-issues" })
   |> should.be_true
@@ -925,9 +963,7 @@ pub fn view_create_rejects_bad_bodies_test() {
   let neither =
     web.handle_request(
       local_request(http.Post, "/jira/views")
-      |> simulate.json_body(
-        json.object([#("name", json.string("x"))]),
-      ),
+      |> simulate.json_body(json.object([#("name", json.string("x"))])),
     )
   neither.status |> should.equal(400)
 
@@ -1011,8 +1047,7 @@ pub fn board_issues_unreachable_test() {
   envoy.set("JIRA_EMAIL", "jeff@example.com")
   envoy.set("JIRA_API_TOKEN", "test-token")
   envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
-  let request =
-    local_request(http.Get, "/jira/board/1/issues?view=my-issues")
+  let request = local_request(http.Get, "/jira/board/1/issues?view=my-issues")
   web.handle_request(request).status |> should.equal(502)
 }
 

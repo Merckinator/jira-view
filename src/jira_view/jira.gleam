@@ -179,12 +179,20 @@ pub fn get_with_query(
 }
 
 /// POST `body` (JSON) to `path`.
-pub fn post(cfg: Config, path: String, body: String) -> Result(String, JiraError) {
+pub fn post(
+  cfg: Config,
+  path: String,
+  body: String,
+) -> Result(String, JiraError) {
   send_json(http.Post, cfg, path, body)
 }
 
 /// PUT `body` (JSON) to `path` (Jira's edit-issue endpoint).
-pub fn put(cfg: Config, path: String, body: String) -> Result(String, JiraError) {
+pub fn put(
+  cfg: Config,
+  path: String,
+  body: String,
+) -> Result(String, JiraError) {
   send_json(http.Put, cfg, path, body)
 }
 
@@ -232,10 +240,12 @@ fn boards_pages(
   start_at: Int,
   acc: List(types.AgileBoard),
 ) -> Result(List(types.AgileBoard), JiraError) {
-  use body <- result.try(get_with_query(cfg, boards_path, [
-    #("startAt", int.to_string(start_at)),
-    #("maxResults", "50"),
-  ]))
+  use body <- result.try(
+    get_with_query(cfg, boards_path, [
+      #("startAt", int.to_string(start_at)),
+      #("maxResults", "50"),
+    ]),
+  )
   case json.parse(body, types.boards_page_decoder()) {
     Error(error) -> Error(Decode(error))
     Ok(#(boards, total)) -> {
@@ -267,11 +277,13 @@ fn board_issues_pages(
   acc: List(List(types.Issue)),
   count: Int,
 ) -> Result(List(types.Issue), JiraError) {
-  use body <- result.try(get_with_query(cfg, board_issues_path(board_id), [
-    #("startAt", int.to_string(start_at)),
-    #("maxResults", page_size),
-    #("fields", search_fields),
-  ]))
+  use body <- result.try(
+    get_with_query(cfg, board_issues_path(board_id), [
+      #("startAt", int.to_string(start_at)),
+      #("maxResults", page_size),
+      #("fields", search_fields),
+    ]),
+  )
   case json.parse(body, types.agile_page_decoder()) {
     Error(error) -> Error(Decode(error))
     Ok(#(issues, total)) -> {
@@ -323,10 +335,12 @@ pub fn avatar(
   cfg: Config,
   account_id: String,
 ) -> Result(#(BitArray, String), JiraError) {
-  use body <- result.try(get_with_query(cfg, user_path, [
-    #("accountId", account_id),
-    #("expand", "avatarUrls"),
-  ]))
+  use body <- result.try(
+    get_with_query(cfg, user_path, [
+      #("accountId", account_id),
+      #("expand", "avatarUrls"),
+    ]),
+  )
   use url <- result.try(case json.parse(body, types.avatar_url_decoder()) {
     Ok("") -> Error(Api(404, "user has no avatar"))
     Ok(url) -> Ok(url)
@@ -337,9 +351,7 @@ pub fn avatar(
 
 pub const user_path = "/rest/api/3/user"
 
-fn get_public_bits(
-  url: String,
-) -> Result(#(BitArray, String), JiraError) {
+fn get_public_bits(url: String) -> Result(#(BitArray, String), JiraError) {
   use req <- result.try(
     request.to(url)
     |> result.map_error(fn(_) { Api(0, "avatar URL could not be parsed") }),
@@ -357,13 +369,12 @@ fn send_bits_and_check(
     Ok(resp) ->
       case resp.status {
         status if status >= 200 && status < 300 ->
-          Ok(#(
-            resp.body,
-            case list.key_find(resp.headers, "content-type") {
+          Ok(
+            #(resp.body, case list.key_find(resp.headers, "content-type") {
               Ok(content_type) -> content_type
               Error(_) -> "application/octet-stream"
-            },
-          ))
+            }),
+          )
         status if status >= 300 && status < 400 ->
           case list.key_find(resp.headers, "location") {
             Ok(next_url) -> get_public_bits(next_url)

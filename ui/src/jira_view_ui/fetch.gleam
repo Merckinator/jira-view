@@ -32,7 +32,10 @@ fn put_json_ffi(
 ) -> Nil
 
 @external(javascript, "./fetch_ffi.mjs", "delete_json")
-fn delete_json_ffi(url: String, callback: fn(Result(String, String)) -> Nil) -> Nil
+fn delete_json_ffi(
+  url: String,
+  callback: fn(Result(String, String)) -> Nil,
+) -> Nil
 
 /// GET a URL and map the raw response body into a message.
 pub fn get(
@@ -51,9 +54,7 @@ pub fn patch_json(
   to_msg: fn(Result(Nil, String)) -> msg,
 ) -> Effect(msg) {
   effect.from(fn(dispatch) {
-    patch_json_ffi(url, body, fn(result) {
-      dispatch(to_msg(as_nil(result)))
-    })
+    patch_json_ffi(url, body, fn(result) { dispatch(to_msg(as_nil(result))) })
   })
 }
 
@@ -64,9 +65,7 @@ pub fn post_json(
   to_msg: fn(Result(Nil, String)) -> msg,
 ) -> Effect(msg) {
   effect.from(fn(dispatch) {
-    post_json_ffi(url, body, fn(result) {
-      dispatch(to_msg(as_nil(result)))
-    })
+    post_json_ffi(url, body, fn(result) { dispatch(to_msg(as_nil(result))) })
   })
 }
 
@@ -89,9 +88,7 @@ pub fn put_json(
   to_msg: fn(Result(Nil, String)) -> msg,
 ) -> Effect(msg) {
   effect.from(fn(dispatch) {
-    put_json_ffi(url, body, fn(result) {
-      dispatch(to_msg(as_nil(result)))
-    })
+    put_json_ffi(url, body, fn(result) { dispatch(to_msg(as_nil(result))) })
   })
 }
 
@@ -107,11 +104,12 @@ pub fn put_json_raw(
 }
 
 /// DELETE a URL; successes carry no usable payload.
-pub fn delete_json(url: String, to_msg: fn(Result(Nil, String)) -> msg) -> Effect(msg) {
+pub fn delete_json(
+  url: String,
+  to_msg: fn(Result(Nil, String)) -> msg,
+) -> Effect(msg) {
   effect.from(fn(dispatch) {
-    delete_json_ffi(url, fn(result) {
-      dispatch(to_msg(as_nil(result)))
-    })
+    delete_json_ffi(url, fn(result) { dispatch(to_msg(as_nil(result))) })
   })
 }
 

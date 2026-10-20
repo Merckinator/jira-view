@@ -220,7 +220,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         _ -> #(model, effect.none())
       }
     NewView -> #(
-      Model(..model, edit: Some(new_edit_form()), boards: None, view_error: None),
+      Model(
+        ..model,
+        edit: Some(new_edit_form()),
+        boards: None,
+        view_error: None,
+      ),
       fetch_boards(),
     )
     EditExisting ->
@@ -245,25 +250,35 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     CancelEdit -> #(Model(..model, edit: None, view_error: None), effect.none())
     PickJqlSource ->
       case model.edit {
-        Some(form) ->
-          #(Model(..model, edit: Some(EditForm(..form, source: types.Jql("")))), effect.none())
+        Some(form) -> #(
+          Model(..model, edit: Some(EditForm(..form, source: types.Jql("")))),
+          effect.none(),
+        )
         None -> #(model, effect.none())
       }
     SetEditName(name) ->
       case model.edit {
-        Some(form) -> #(Model(..model, edit: Some(EditForm(..form, name:))), effect.none())
+        Some(form) -> #(
+          Model(..model, edit: Some(EditForm(..form, name:))),
+          effect.none(),
+        )
         None -> #(model, effect.none())
       }
     SetEditJql(jql) ->
       case model.edit {
-        Some(form) ->
-          #(Model(..model, edit: Some(EditForm(..form, source: types.Jql(jql)))), effect.none())
+        Some(form) -> #(
+          Model(..model, edit: Some(EditForm(..form, source: types.Jql(jql)))),
+          effect.none(),
+        )
         None -> #(model, effect.none())
       }
     SetEditBoard(board_id) ->
       case model.edit {
         Some(form) -> #(
-          Model(..model, edit: Some(EditForm(..form, source: types.Board(board_id)))),
+          Model(
+            ..model,
+            edit: Some(EditForm(..form, source: types.Board(board_id))),
+          ),
           effect.none(),
         )
         None -> #(model, effect.none())
@@ -273,7 +288,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         Some(form) -> #(
           Model(
             ..model,
-            edit: Some(EditForm(..form, columns: set_column(form.columns, column, checked))),
+            edit: Some(
+              EditForm(
+                ..form,
+                columns: set_column(form.columns, column, checked),
+              ),
+            ),
           ),
           effect.none(),
         )
@@ -281,7 +301,10 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       }
     SaveView ->
       case model.edit {
-        Some(form) -> #(Model(..model, view_error: None), save_view_effect(form))
+        Some(form) -> #(
+          Model(..model, view_error: None),
+          save_view_effect(form),
+        )
         None -> #(model, effect.none())
       }
     GotViewSaved(Ok(view)) ->
@@ -305,14 +328,13 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           case form {
             EditForm(Some(id), _, _, _, confirm_delete) ->
               case confirm_delete {
-                False ->
-                  #(
-                    Model(
-                      ..model,
-                      edit: Some(EditForm(..form, confirm_delete: True)),
-                    ),
-                    effect.none(),
-                  )
+                False -> #(
+                  Model(
+                    ..model,
+                    edit: Some(EditForm(..form, confirm_delete: True)),
+                  ),
+                  effect.none(),
+                )
                 True -> #(
                   Model(..model, view_error: None),
                   fetch.delete_json("/jira/views/" <> id, fn(result) {
@@ -342,7 +364,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         )
         [view, ..] ->
           switch_to_view(
-            Model(..model, views: ViewsLoaded(remaining), edit: None, view_error: None),
+            Model(
+              ..model,
+              views: ViewsLoaded(remaining),
+              edit: None,
+              view_error: None,
+            ),
             view,
           )
       }
@@ -375,12 +402,11 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       }
     GotIssues(view_id, Ok(issues)) ->
       case is_current_view(model, view_id) {
-        True ->
-          #(
-            Model(..model, state: Ready(issues), cursor: None),
-            // (Re)attach drag-and-drop once the fresh tbody is in the DOM.
-            sortable.attach(".jv-tbody", Dropped),
-          )
+        True -> #(
+          Model(..model, state: Ready(issues), cursor: None),
+          // (Re)attach drag-and-drop once the fresh tbody is in the DOM.
+          sortable.attach(".jv-tbody", Dropped),
+        )
         False -> #(model, effect.none())
       }
     GotIssues(view_id, Error(message)) ->
@@ -445,26 +471,24 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     Select(key) -> open_detail(model, key)
     GotDetail(key, Ok(detail)) ->
       case is_selected(model, key) {
-        True ->
-          #(
-            Model(
-              ..model,
-              selected: Some(DetailLoaded(detail)),
-              // The fresh detail also refreshes the matching row (used after
-              // transition failures to undo the optimistic flip).
-              state: sync_ready_row(model.state, detail.issue),
-            ),
-            effect.none(),
-          )
+        True -> #(
+          Model(
+            ..model,
+            selected: Some(DetailLoaded(detail)),
+            // The fresh detail also refreshes the matching row (used after
+            // transition failures to undo the optimistic flip).
+            state: sync_ready_row(model.state, detail.issue),
+          ),
+          effect.none(),
+        )
         False -> #(model, effect.none())
       }
     GotDetail(key, Error(message)) ->
       case is_selected(model, key) {
-        True ->
-          #(
-            Model(..model, selected: Some(DetailFailed(message))),
-            effect.none(),
-          )
+        True -> #(
+          Model(..model, selected: Some(DetailFailed(message))),
+          effect.none(),
+        )
         False -> #(model, effect.none())
       }
     // Escape closes an open detail; otherwise it leaves whichever control has
@@ -482,36 +506,32 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     CloseDetail -> close_detail(model)
     GotTransitions(key, Ok(transitions)) ->
       case is_selected(model, key) {
-        True ->
-          #(
-            Model(..model, transitions: Some(Ok(transitions))),
-            effect.none(),
-          )
+        True -> #(
+          Model(..model, transitions: Some(Ok(transitions))),
+          effect.none(),
+        )
         False -> #(model, effect.none())
       }
     GotTransitions(key, Error(message)) ->
       case is_selected(model, key) {
-        True ->
-          #(
-            Model(..model, transitions: Some(Error(message))),
-            effect.none(),
-          )
+        True -> #(
+          Model(..model, transitions: Some(Error(message))),
+          effect.none(),
+        )
         False -> #(model, effect.none())
       }
-    GotResolutions(Ok(resolutions)) ->
-      #(
-        Model(
-          ..model,
-          resolutions: Some(Ok(resolutions)),
-          resolution_draft: choose_resolution(
-            model.resolution_draft,
-            resolutions,
-          ),
-        ),
-        effect.none(),
-      )
-    GotResolutions(Error(message)) ->
-      #(Model(..model, resolutions: Some(Error(message))), effect.none())
+    GotResolutions(Ok(resolutions)) -> #(
+      Model(
+        ..model,
+        resolutions: Some(Ok(resolutions)),
+        resolution_draft: choose_resolution(model.resolution_draft, resolutions),
+      ),
+      effect.none(),
+    )
+    GotResolutions(Error(message)) -> #(
+      Model(..model, resolutions: Some(Error(message))),
+      effect.none(),
+    )
     SetResolution(name) -> #(
       Model(..model, resolution_draft: name),
       effect.none(),
@@ -520,17 +540,12 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       case selected_key(model) {
         Error(_) -> #(model, effect.none())
         Ok(key) -> {
-          let requires_resolution =
-            transition_requires_resolution(transition)
+          let requires_resolution = transition_requires_resolution(transition)
           case requires_resolution, string.trim(model.resolution_draft) {
-            True, "" ->
-              #(
-                Model(
-                  ..model,
-                  write_error: Some("Pick a resolution first."),
-                ),
-                effect.none(),
-              )
+            True, "" -> #(
+              Model(..model, write_error: Some("Pick a resolution first.")),
+              effect.none(),
+            )
             _, _ -> {
               let resolution = case requires_resolution {
                 True -> Some(string.trim(model.resolution_draft))
@@ -539,11 +554,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
               #(
                 Model(
                   ..model,
-                  state: flip_row_status(
-                    model.state,
-                    key,
-                    transition.to_status,
-                  ),
+                  state: flip_row_status(model.state, key, transition.to_status),
                   selected: flip_detail_status(
                     model.selected,
                     transition.to_status,
@@ -638,10 +649,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       ),
       effect.none(),
     )
-    SetLabelDraft(text) -> #(
-      Model(..model, label_draft: text),
-      effect.none(),
-    )
+    SetLabelDraft(text) -> #(Model(..model, label_draft: text), effect.none())
     AddLabel -> add_label(model)
     RemoveLabel(label) -> remove_label(model, label)
     GotLabels(_, Ok(_)) -> #(model, effect.none())
@@ -666,7 +674,8 @@ fn view_list_ready(
   views: List(types.ViewDef),
 ) -> #(Model, Effect(Msg)) {
   case views {
-    [view, ..] -> switch_to_view(Model(..model, views: ViewsLoaded(views)), view)
+    [view, ..] ->
+      switch_to_view(Model(..model, views: ViewsLoaded(views)), view)
     [] -> #(
       Model(..model, views: ViewsLoaded([]), current_view: None),
       effect.none(),
@@ -704,7 +713,9 @@ fn switch_to_view(model: Model, view: types.ViewDef) -> #(Model, Effect(Msg)) {
 fn upsert_view(views: ViewList, view: types.ViewDef) -> ViewList {
   case views {
     ViewsLoaded(existing) ->
-      case list.any(existing, fn(existing_view) { existing_view.id == view.id }) {
+      case
+        list.any(existing, fn(existing_view) { existing_view.id == view.id })
+      {
         True ->
           ViewsLoaded(
             list.map(existing, fn(existing_view) {
@@ -730,7 +741,11 @@ fn new_edit_form() -> EditForm {
   )
 }
 
-fn set_column(columns: List(String), column: String, checked: Bool) -> List(String) {
+fn set_column(
+  columns: List(String),
+  column: String,
+  checked: Bool,
+) -> List(String) {
   case checked, list.contains(columns, column) {
     True, False -> list.append(columns, [column])
     True, True -> columns
@@ -789,35 +804,27 @@ fn boards_wrapper_decoder() -> decode.Decoder(List(types.AgileBoard)) {
 fn save_view_effect(form: EditForm) -> Effect(Msg) {
   case form.id {
     Some(id) ->
-      fetch.put_json_raw(
-        "/jira/views/" <> id,
-        view_body(form),
-        fn(response) {
-          case response {
-            Ok(body) ->
-              case json.parse(body, types.app_view_decoder()) {
-                Ok(view) -> GotViewSaved(Ok(view))
-                Error(error) -> GotViewSaved(Error(string.inspect(error)))
-              }
-            Error(message) -> GotViewSaved(Error(message))
-          }
-        },
-      )
+      fetch.put_json_raw("/jira/views/" <> id, view_body(form), fn(response) {
+        case response {
+          Ok(body) ->
+            case json.parse(body, types.app_view_decoder()) {
+              Ok(view) -> GotViewSaved(Ok(view))
+              Error(error) -> GotViewSaved(Error(string.inspect(error)))
+            }
+          Error(message) -> GotViewSaved(Error(message))
+        }
+      })
     None ->
-      fetch.post_json_raw(
-        "/jira/views",
-        view_body(form),
-        fn(response) {
-          case response {
-            Ok(body) ->
-              case json.parse(body, types.app_view_decoder()) {
-                Ok(view) -> GotViewSaved(Ok(view))
-                Error(error) -> GotViewSaved(Error(string.inspect(error)))
-              }
-            Error(message) -> GotViewSaved(Error(message))
-          }
-        },
-      )
+      fetch.post_json_raw("/jira/views", view_body(form), fn(response) {
+        case response {
+          Ok(body) ->
+            case json.parse(body, types.app_view_decoder()) {
+              Ok(view) -> GotViewSaved(Ok(view))
+              Error(error) -> GotViewSaved(Error(string.inspect(error)))
+            }
+          Error(message) -> GotViewSaved(Error(message))
+        }
+      })
   }
 }
 
@@ -866,10 +873,7 @@ fn search_url(view_id: String, jql: String) -> String {
   "/jira/search?" <> uri.query_to_string([#("jql", jql), #("view", view_id)])
 }
 
-fn decode_issues(
-  view_id: String,
-  response: Result(String, String),
-) -> Msg {
+fn decode_issues(view_id: String, response: Result(String, String)) -> Msg {
   case response {
     Ok(body) ->
       case json.parse(body, types.issues_response_decoder()) {
@@ -1012,9 +1016,14 @@ fn save_order(issues: List(Issue), view: Option(types.ViewDef)) -> Effect(Msg) {
     Some(types.ViewDef(id: view_id, ..)) ->
       fetch.patch_json(
         "/jira/views/" <> view_id <> "/order",
-        json.to_string(json.object([
-          #("keys", json.array(list.map(issues, fn(issue) { issue.key }), json.string)),
-        ])),
+        json.to_string(
+          json.object([
+            #(
+              "keys",
+              json.array(list.map(issues, fn(issue) { issue.key }), json.string),
+            ),
+          ]),
+        ),
         fn(result) {
           case result {
             Ok(_) -> OrderSaved(Ok(Nil))
@@ -1111,7 +1120,7 @@ fn save_labels(key: String, labels: List(String)) -> Effect(Msg) {
   fetch.put_json(
     "/jira/issue/" <> key <> "/labels",
     json.object([#("labels", json.array(labels, json.string))])
-    |> json.to_string,
+      |> json.to_string,
     fn(result) { GotLabels(key, result) },
   )
 }
@@ -1153,13 +1162,15 @@ fn flip_detail_status(
 ) -> Option(Detail) {
   case selected {
     Some(DetailLoaded(info)) ->
-      Some(DetailLoaded(types.IssueDetail(
-        ..info,
-        issue: types.Issue(
-          ..info.issue,
-          status: types.Status(to_status, info.issue.status.category),
+      Some(DetailLoaded(
+        types.IssueDetail(
+          ..info,
+          issue: types.Issue(
+            ..info.issue,
+            status: types.Status(to_status, info.issue.status.category),
+          ),
         ),
-      )))
+      ))
     selected -> selected
   }
 }
@@ -1172,7 +1183,10 @@ fn sync_ready_row(state: State, fresh: types.Issue) -> State {
   }
 }
 
-fn sync_issue(issues: List(types.Issue), fresh: types.Issue) -> List(types.Issue) {
+fn sync_issue(
+  issues: List(types.Issue),
+  fresh: types.Issue,
+) -> List(types.Issue) {
   map_issue(issues, fresh.key, fn(_) { fresh })
 }
 
@@ -1209,10 +1223,7 @@ fn add_label(model: Model) -> #(Model, Effect(Msg)) {
         _ ->
           case label_has_whitespace(label) {
             True -> #(
-              Model(
-                ..model,
-                write_error: Some("Labels can't contain spaces."),
-              ),
+              Model(..model, write_error: Some("Labels can't contain spaces.")),
               effect.none(),
             )
             False ->
@@ -1269,10 +1280,12 @@ fn set_detail_labels(
 ) -> Option(Detail) {
   case selected {
     Some(DetailLoaded(info)) ->
-      Some(DetailLoaded(types.IssueDetail(
-        ..info,
-        issue: types.Issue(..info.issue, labels: labels),
-      )))
+      Some(DetailLoaded(
+        types.IssueDetail(
+          ..info,
+          issue: types.Issue(..info.issue, labels: labels),
+        ),
+      ))
     selected -> selected
   }
 }
@@ -1292,9 +1305,7 @@ fn set_issue_labels(state: State, key: String, labels: List(String)) -> State {
 fn label_has_whitespace(label: String) -> Bool {
   label
   |> string.to_graphemes
-  |> list.any(fn(grapheme) {
-    list.contains([" ", "\t", "\n", "\r"], grapheme)
-  })
+  |> list.any(fn(grapheme) { list.contains([" ", "\t", "\n", "\r"], grapheme) })
 }
 
 fn append_comment(
@@ -1303,10 +1314,12 @@ fn append_comment(
 ) -> Option(Detail) {
   case selected {
     Some(DetailLoaded(info)) ->
-      Some(DetailLoaded(types.IssueDetail(
-        ..info,
-        comments: list.append(info.comments, [comment]),
-      )))
+      Some(DetailLoaded(
+        types.IssueDetail(
+          ..info,
+          comments: list.append(info.comments, [comment]),
+        ),
+      ))
     selected -> selected
   }
 }
@@ -1317,10 +1330,9 @@ fn append_worklog(
 ) -> Option(Detail) {
   case selected {
     Some(DetailLoaded(info)) ->
-      Some(DetailLoaded(types.IssueDetail(
-        ..info,
-        worklog: list.append(info.worklog, [entry]),
-      )))
+      Some(DetailLoaded(
+        types.IssueDetail(..info, worklog: list.append(info.worklog, [entry])),
+      ))
     selected -> selected
   }
 }
@@ -1328,13 +1340,16 @@ fn append_worklog(
 // ————— view —————
 
 pub fn view(model: Model) -> Element(Msg) {
-  html.div([attribute.class("jv")], list.flatten([
-    [html.div([attribute.class("jv-toolbar")], toolbar(model))],
-    case model.selected {
-      Some(detail) -> [detail_panel(model, detail)]
-      None -> list_view(model)
-    },
-  ]))
+  html.div(
+    [attribute.class("jv")],
+    list.flatten([
+      [html.div([attribute.class("jv-toolbar")], toolbar(model))],
+      case model.selected {
+        Some(detail) -> [detail_panel(model, detail)]
+        None -> list_view(model)
+      },
+    ]),
+  )
 }
 
 /// The list area — order/edit/loading/error/table. It is replaced wholesale by
@@ -1390,62 +1405,74 @@ fn toolbar(model: Model) -> List(Element(Msg)) {
     ViewsLoaded(views) ->
       list.flatten([
         [
-          html.div([attribute.class("jv-jql")], list.flatten([
-            case views {
-              [] -> [
-                html.span([attribute.class("jv-note")], [text("No views. Create one:")]),
-              ]
-              _ -> [
-                html.select(
-                  [
-                    attribute.class("jv-view-select"),
-                    attribute.value(case model.current_view {
-                      Some(current) -> current.id
-                      None -> ""
-                    }),
-                    event.on_change(SelectView),
-                  ],
-                  list.map(views, fn(view) {
-                    html.option(
-                      [
-                        attribute.value(view.id),
-                        attribute.selected(
-                          case model.current_view {
+          html.div(
+            [attribute.class("jv-jql")],
+            list.flatten([
+              case views {
+                [] -> [
+                  html.span([attribute.class("jv-note")], [
+                    text("No views. Create one:"),
+                  ]),
+                ]
+                _ -> [
+                  html.select(
+                    [
+                      attribute.class("jv-view-select"),
+                      attribute.value(case model.current_view {
+                        Some(current) -> current.id
+                        None -> ""
+                      }),
+                      event.on_change(SelectView),
+                    ],
+                    list.map(views, fn(view) {
+                      html.option(
+                        [
+                          attribute.value(view.id),
+                          attribute.selected(case model.current_view {
                             Some(current) -> current.id == view.id
                             None -> False
-                          },
-                        ),
-                      ],
-                      view.name,
-                    )
-                  }),
-                ),
-              ]
-            },
-            case model.current_view {
-              Some(view) -> [query_slot(model, view)]
-              None -> []
-            },
-            [
-              html.button([attribute.class("jv-refresh"), event.on_click(Refresh)], [
-                text("Refresh"),
-              ]),
-            ],
-            case model.current_view, model.edit {
-              Some(_), None -> [
+                          }),
+                        ],
+                        view.name,
+                      )
+                    }),
+                  ),
+                ]
+              },
+              case model.current_view {
+                Some(view) -> [query_slot(model, view)]
+                None -> []
+              },
+              [
                 html.button(
-                  [attribute.class("jv-edit-view"), event.on_click(EditExisting)],
-                  [text("Edit")],
-                )
-              ]
-              _, _ -> []
-            },
-            [
-              html.button([attribute.class("jv-new-view"), event.on_click(NewView)], [
-                text("+ New view"),
-              ]),
-            ],
-          ])),
+                  [attribute.class("jv-refresh"), event.on_click(Refresh)],
+                  [
+                    text("Refresh"),
+                  ],
+                ),
+              ],
+              case model.current_view, model.edit {
+                Some(_), None -> [
+                  html.button(
+                    [
+                      attribute.class("jv-edit-view"),
+                      event.on_click(EditExisting),
+                    ],
+                    [text("Edit")],
+                  ),
+                ]
+                _, _ -> []
+              },
+              [
+                html.button(
+                  [attribute.class("jv-new-view"), event.on_click(NewView)],
+                  [
+                    text("+ New view"),
+                  ],
+                ),
+              ],
+            ]),
+          ),
         ],
       ])
   }
@@ -1456,23 +1483,24 @@ fn toolbar(model: Model) -> List(Element(Msg)) {
 /// own field), or the board note.
 fn query_slot(model: Model, view: types.ViewDef) -> Element(Msg) {
   case view.source {
-    types.Jql(_) -> case model.edit {
-      Some(_) -> element.none()
-      None ->
-        html.input([
-          attribute.type_("text"),
-          attribute.class("jv-jql-input"),
-          attribute.value(model.jql_input),
-          event.on_input(SetJql),
-          // Enter in the query console refreshes, like the button.
-          event.on_keydown(fn(key) {
-            case key {
-              "Enter" -> Refresh
-              _ -> NoOp
-            }
-          }),
-        ])
-    }
+    types.Jql(_) ->
+      case model.edit {
+        Some(_) -> element.none()
+        None ->
+          html.input([
+            attribute.type_("text"),
+            attribute.class("jv-jql-input"),
+            attribute.value(model.jql_input),
+            event.on_input(SetJql),
+            // Enter in the query console refreshes, like the button.
+            event.on_keydown(fn(key) {
+              case key {
+                "Enter" -> Refresh
+                _ -> NoOp
+              }
+            }),
+          ])
+      }
     types.Board(_) ->
       html.span([attribute.class("jv-board-note")], [
         text("board · all issues"),
@@ -1520,19 +1548,22 @@ fn edit_panel(model: Model, form: EditForm) -> Element(Msg) {
         event.on_input(fn(jql) { SetEditJql(jql) }),
       ]),
     ]),
-    html.div([attribute.class("jv-edit-columns")], list.flatten([
-      [html.span([attribute.class("jv-note")], [text("Columns:")])],
-      list.map(default_columns, fn(column) {
-        html.label([], [
-          html.input([
-            attribute.type_("checkbox"),
-            attribute.checked(list.contains(form.columns, column)),
-            event.on_check(fn(checked) { ToggleColumn(column, checked) }),
-          ]),
-          text(column),
-        ])
-      }),
-    ])),
+    html.div(
+      [attribute.class("jv-edit-columns")],
+      list.flatten([
+        [html.span([attribute.class("jv-note")], [text("Columns:")])],
+        list.map(default_columns, fn(column) {
+          html.label([], [
+            html.input([
+              attribute.type_("checkbox"),
+              attribute.checked(list.contains(form.columns, column)),
+              event.on_check(fn(checked) { ToggleColumn(column, checked) }),
+            ]),
+            text(column),
+          ])
+        }),
+      ]),
+    ),
     html.div([attribute.class("jv-edit-actions")], [
       html.button(
         [
@@ -1545,9 +1576,12 @@ fn edit_panel(model: Model, form: EditForm) -> Element(Msg) {
         ],
         [text("Save view")],
       ),
-      html.button([attribute.class("jv-cancel-edit"), event.on_click(CancelEdit)], [
-        text("Cancel"),
-      ]),
+      html.button(
+        [attribute.class("jv-cancel-edit"), event.on_click(CancelEdit)],
+        [
+          text("Cancel"),
+        ],
+      ),
       html.button(
         [
           attribute.class("jv-delete"),
@@ -1622,7 +1656,7 @@ fn source_select(
               attribute.disabled(True),
             ],
             "loading boards…",
-          )
+          ),
         ]
         Some(Error(_)) -> [
           html.option(
@@ -1632,7 +1666,7 @@ fn source_select(
               attribute.disabled(True),
             ],
             "boards unavailable",
-          )
+          ),
         ]
         _ -> []
       },
@@ -1645,7 +1679,11 @@ fn source_select(
 /// drag-and-drop — SortableJS moves physical nodes behind Lustre's back,
 /// and unkeyed positional patching would visually scramble the order.
 /// Cells are keyed by column name, so column changes reuse nodes too.
-fn table(issues: List(Issue), columns: List(String), cursor: Option(Int)) -> Element(Msg) {
+fn table(
+  issues: List(Issue),
+  columns: List(String),
+  cursor: Option(Int),
+) -> Element(Msg) {
   html.table(
     [
       attribute.class("jv-table"),
@@ -1680,7 +1718,12 @@ fn cell(content: String) -> Element(Msg) {
   html.td([], [text(content)])
 }
 
-fn row(issue: Issue, index: Int, cursor: Option(Int), columns: List(String)) -> Element(Msg) {
+fn row(
+  issue: Issue,
+  index: Int,
+  cursor: Option(Int),
+  columns: List(String),
+) -> Element(Msg) {
   keyed.element(
     "tr",
     [
@@ -1692,18 +1735,15 @@ fn row(issue: Issue, index: Int, cursor: Option(Int), columns: List(String)) -> 
     ],
     list.flatten([
       [#("grab", grab_cell())],
-      list.map(columns, fn(column) {
-        #(column, view_cell(issue, column))
-      }),
+      list.map(columns, fn(column) { #(column, view_cell(issue, column)) }),
     ]),
   )
 }
 
 fn grab_cell() -> Element(Msg) {
-  html.td(
-    [attribute.class("jv-grab"), attribute.title("Drag to reorder")],
-    [text("⋮⋮")],
-  )
+  html.td([attribute.class("jv-grab"), attribute.title("Drag to reorder")], [
+    text("⋮⋮"),
+  ])
 }
 
 fn view_cell(issue: Issue, column: String) -> Element(Msg) {
@@ -1905,41 +1945,45 @@ fn resolution_select(model: Model) -> Element(Msg) {
 /// Attachments render inline (images through the /jira/attachment proxy)
 /// or as same-origin download links.
 fn attachments_section(attachments: List(types.Attachment)) -> Element(Msg) {
-  html.div([attribute.class("jv-section")], list.flatten([
-    [html.h3([attribute.class("jv-section-title")], [text("Attachments")])],
-    case attachments {
-      [] -> [html.p([attribute.class("jv-note")], [text("None.")])]
-      _ -> list.map(attachments, fn(attachment) {
-        html.div([attribute.class("jv-attachment")], [
-          case string.starts_with(attachment.mime_type, "image/") {
-            True ->
-              html.img([
-                attribute.class("jv-attachment-image"),
-                attribute.src("/jira/attachment/" <> attachment.id),
-                attribute.alt(attachment.filename),
-              ])
-            False ->
-              html.a(
-                [
-                  attribute.href("/jira/attachment/" <> attachment.id),
-                  attribute.attribute("download", attachment.filename),
-                ],
-                [text(attachment.filename)],
-              )
-          },
-          text(" "),
-          html.span([attribute.class("jv-comment-meta")], [
-            text(
-              attachment.filename
-                <> " · "
-                <> int.to_string(attachment.size / 1024)
-                <> " kb",
-            ),
-          ]),
-        ])
-      })
-    },
-  ]))
+  html.div(
+    [attribute.class("jv-section")],
+    list.flatten([
+      [html.h3([attribute.class("jv-section-title")], [text("Attachments")])],
+      case attachments {
+        [] -> [html.p([attribute.class("jv-note")], [text("None.")])]
+        _ ->
+          list.map(attachments, fn(attachment) {
+            html.div([attribute.class("jv-attachment")], [
+              case string.starts_with(attachment.mime_type, "image/") {
+                True ->
+                  html.img([
+                    attribute.class("jv-attachment-image"),
+                    attribute.src("/jira/attachment/" <> attachment.id),
+                    attribute.alt(attachment.filename),
+                  ])
+                False ->
+                  html.a(
+                    [
+                      attribute.href("/jira/attachment/" <> attachment.id),
+                      attribute.attribute("download", attachment.filename),
+                    ],
+                    [text(attachment.filename)],
+                  )
+              },
+              text(" "),
+              html.span([attribute.class("jv-comment-meta")], [
+                text(
+                  attachment.filename
+                  <> " · "
+                  <> int.to_string(attachment.size / 1024)
+                  <> " kb",
+                ),
+              ]),
+            ])
+          })
+      },
+    ]),
+  )
 }
 
 fn comments_section(
@@ -1966,11 +2010,14 @@ fn comments_section(
         ])
       }),
       [
-        html.textarea([
-          attribute.class("jv-comment-input"),
-          attribute.placeholder("Add a comment…"),
-          event.on_input(SetCommentDraft),
-        ], draft),
+        html.textarea(
+          [
+            attribute.class("jv-comment-input"),
+            attribute.placeholder("Add a comment…"),
+            event.on_input(SetCommentDraft),
+          ],
+          draft,
+        ),
         html.div([attribute.class("jv-actions")], [
           html.button(
             [attribute.class("jv-comment-send"), event.on_click(CommentClicked)],
@@ -2002,7 +2049,11 @@ fn worklog_section(
         html.div([attribute.class("jv-worklog")], [
           html.div([attribute.class("jv-comment-meta")], [
             text(
-              entry.author <> " · " <> entry.time_spent <> " · " <> entry.started,
+              entry.author
+              <> " · "
+              <> entry.time_spent
+              <> " · "
+              <> entry.started,
             ),
           ]),
           case entry.body {

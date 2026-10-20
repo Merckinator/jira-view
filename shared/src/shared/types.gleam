@@ -97,7 +97,12 @@ pub type Comment {
 /// One work log entry; `started`/`created` are ISO timestamps as reported
 /// by Jira, `time_spent` is Jira's human string ("25m", "2h").
 pub type WorklogEntry {
-  WorklogEntry(author: String, started: String, time_spent: String, body: List(AdfNode))
+  WorklogEntry(
+    author: String,
+    started: String,
+    time_spent: String,
+    body: List(AdfNode),
+  )
 }
 
 /// A workflow transition from GET /rest/api/3/issue/{key}/transitions.
@@ -105,7 +110,12 @@ pub type WorklogEntry {
 /// `fields` lists the transition screen's inputs when the workflow has one
 /// (absent entirely on the simplest team-managed workflows).
 pub type Transition {
-  Transition(id: String, name: String, to_status: String, fields: List(TransitionField))
+  Transition(
+    id: String,
+    name: String,
+    to_status: String,
+    fields: List(TransitionField),
+  )
 }
 
 /// One field of a transition screen. `key` is the system field id
@@ -199,7 +209,15 @@ pub fn issue_decoder() -> decode.Decoder(Issue) {
     decode.list(decode.string),
   ))
   use updated <- decode.subfield(["fields", "updated"], decode.string)
-  decode.success(Issue(key:, id:, summary:, status:, assignee:, labels:, updated:))
+  decode.success(Issue(
+    key:,
+    id:,
+    summary:,
+    status:,
+    assignee:,
+    labels:,
+    updated:,
+  ))
 }
 
 /// Decoder for one page of GET /rest/api/3/search/jql.
@@ -245,13 +263,17 @@ fn app_issue_decoder() -> decode.Decoder(Issue) {
     None,
     decode.optional(app_user_decoder()),
   )
-  use labels <- decode.optional_field(
-    "labels",
-    [],
-    decode.list(decode.string),
-  )
+  use labels <- decode.optional_field("labels", [], decode.list(decode.string))
   use updated <- decode.field("updated", decode.string)
-  decode.success(Issue(key:, id:, summary:, status:, assignee:, labels:, updated:))
+  decode.success(Issue(
+    key:,
+    id:,
+    summary:,
+    status:,
+    assignee:,
+    labels:,
+    updated:,
+  ))
 }
 
 /// Decoder for GET /rest/api/3/issue/{key} with
@@ -388,10 +410,11 @@ fn node_body_decoder(at: String) -> decode.Decoder(List(AdfNode)) {
   decode.optionally_at([at], None, decode.optional(adf.adf_decoder()))
   |> decode.map(fn(doc) {
     case doc {
-      Some(node) -> case node.kind {
-        "doc" -> node.content
-        _ -> [node]
-      }
+      Some(node) ->
+        case node.kind {
+          "doc" -> node.content
+          _ -> [node]
+        }
       None -> []
     }
   })
@@ -399,14 +422,21 @@ fn node_body_decoder(at: String) -> decode.Decoder(List(AdfNode)) {
 
 /// The transitions list of GET /rest/api/3/issue/{key}/transitions.
 pub fn jira_transitions_decoder() -> decode.Decoder(List(Transition)) {
-  use transitions <- decode.field("transitions", decode.list(transition_decoder()))
+  use transitions <- decode.field(
+    "transitions",
+    decode.list(transition_decoder()),
+  )
   decode.success(transitions)
 }
 
 fn transition_decoder() -> decode.Decoder(Transition) {
   use id <- decode.field("id", decode.string)
   use name <- decode.field("name", decode.string)
-  use to_status <- decode.then(decode.optionally_at(["to", "name"], "", decode.string))
+  use to_status <- decode.then(decode.optionally_at(
+    ["to", "name"],
+    "",
+    decode.string,
+  ))
   use fields <- decode.optional_field(
     "fields",
     [],

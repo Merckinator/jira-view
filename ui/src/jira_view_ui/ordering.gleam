@@ -26,11 +26,7 @@ pub fn insert_at(items: List(a), at: Int, item: a) -> List(a) {
 
 /// j/k cursor movement over a list, clamped inside it. Starting with no cursor
 /// picks the top (down) or bottom (up).
-pub fn focus(
-  items: List(a),
-  cursor: Option(Int),
-  down: Bool,
-) -> Option(Int) {
+pub fn focus(items: List(a), cursor: Option(Int), down: Bool) -> Option(Int) {
   case items {
     [] -> cursor
     _ -> {

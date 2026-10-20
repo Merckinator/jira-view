@@ -67,7 +67,9 @@ const board_column_migration = "ALTER TABLE views ADD COLUMN board_id INTEGER"
 /// The seeding of a genuinely fresh database: exactly one view so the app
 /// is usable (and addressable as /jira/views/…) before the user edits it.
 const seed_view_id = "my-issues"
+
 const seed_view_name = "My issues"
+
 const seed_view_jql =
   "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
 
@@ -89,12 +91,15 @@ pub fn migrate(conn: sqlight.Connection) -> Result(Nil, DbError) {
   case views_table_existed {
     True -> Ok(Nil)
     False ->
-      seed_view(conn, ViewDef(
-        id: seed_view_id,
-        name: seed_view_name,
-        source: Jql(seed_view_jql),
-        columns: default_columns(),
-      ))
+      seed_view(
+        conn,
+        ViewDef(
+          id: seed_view_id,
+          name: seed_view_name,
+          source: Jql(seed_view_jql),
+          columns: default_columns(),
+        ),
+      )
   }
 }
 
@@ -313,7 +318,10 @@ fn insert_view(
 }
 
 /// Insert a view whose id must be unique (the caller slugs/guards it).
-pub fn create_view(conn: sqlight.Connection, view: ViewDef) -> Result(Nil, DbError) {
+pub fn create_view(
+  conn: sqlight.Connection,
+  view: ViewDef,
+) -> Result(Nil, DbError) {
   insert_view(conn, view.id, view)
 }
 

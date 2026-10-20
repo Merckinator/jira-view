@@ -66,7 +66,9 @@ fn handle_local_request(request: wisp.Request) -> wisp.Response {
     ["jira", "issue", key, "worklog"] ->
       wisp.require_method(request, http.Post, fn() { worklog(request, key) })
     ["jira", "issue", key, "labels"] ->
-      wisp.require_method(request, http.Put, fn() { update_labels(request, key) })
+      wisp.require_method(request, http.Put, fn() {
+        update_labels(request, key)
+      })
     ["jira", "attachment", attachment_id] ->
       wisp.require_method(request, http.Get, fn() { attachment(attachment_id) })
     ["jira", "avatar", account_id] ->
@@ -81,7 +83,9 @@ fn handle_local_request(request: wisp.Request) -> wisp.Response {
     ["jira", "views"] -> views_endpoint(request)
     ["jira", "views", view_id] -> view_endpoint(request, view_id)
     ["jira", "views", view_id, "order"] ->
-      wisp.require_method(request, http.Patch, fn() { save_order(request, view_id) })
+      wisp.require_method(request, http.Patch, fn() {
+        save_order(request, view_id)
+      })
     _ -> wisp.not_found()
   }
 }
@@ -166,7 +170,9 @@ fn merge_with_saved_order(
   case saved {
     Ok(saved) -> db.merge_view_order(saved, issues)
     Error(error) -> {
-      io.println("jira-view: saved order unavailable: " <> string.inspect(error))
+      io.println(
+        "jira-view: saved order unavailable: " <> string.inspect(error),
+      )
       issues
     }
   }
@@ -289,7 +295,9 @@ fn transition(request: wisp.Request, key: String) -> wisp.Response {
                         [_, ..] as fields ->
                           json_error(
                             "transition_requires_fields",
-                            "transition " <> t.name <> " requires input the "
+                            "transition "
+                              <> t.name
+                              <> " requires input the "
                               <> "UI does not collect yet: "
                               <> string.join(fields, ", "),
                             400,
@@ -304,11 +312,7 @@ fn transition(request: wisp.Request, key: String) -> wisp.Response {
                               )
                             Ok(body) ->
                               case
-                                jira.post(
-                                  cfg,
-                                  jira.transitions_path(key),
-                                  body,
-                                )
+                                jira.post(cfg, jira.transitions_path(key), body)
                               {
                                 Ok(_) ->
                                   json.object([
@@ -353,9 +357,7 @@ pub fn transition_post_body(
     True, Some(name) ->
       case string.trim(name) {
         "" ->
-          Error(
-            "transition " <> transition.name <> " requires a resolution",
-          )
+          Error("transition " <> transition.name <> " requires a resolution")
         name ->
           Ok([
             #(
@@ -392,7 +394,7 @@ pub fn parse_transition_body(
     Error(_) ->
       Error(
         "expected {\"id\": \"<transition id>\", \"resolution\": "
-          <> "\"<resolution name>\" (optional)} JSON",
+        <> "\"<resolution name>\" (optional)} JSON",
       )
   }
 }
@@ -485,7 +487,9 @@ fn worklog(request: wisp.Request, key: String) -> wisp.Response {
 
 /// The worklog request body shape {"time_spent": "…"}. Exposed for tests.
 pub fn parse_worklog_body(body: String) -> Result(String, String) {
-  case json.parse(body, decode.field("time_spent", decode.string, decode.success)) {
+  case
+    json.parse(body, decode.field("time_spent", decode.string, decode.success))
+  {
     Ok(time_spent) -> Ok(string.trim(time_spent))
     Error(_) -> Error("expected {\"time_spent\": \"…\"} JSON")
   }
@@ -503,9 +507,7 @@ fn update_labels(request: wisp.Request, key: String) -> wisp.Response {
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
-          case
-            jira.put(cfg, jira.issue_path(key), labels_update_body(labels))
-          {
+          case jira.put(cfg, jira.issue_path(key), labels_update_body(labels)) {
             Ok(_) ->
               json.object([
                 #("labels", json.array(labels, json.string)),
@@ -543,8 +545,8 @@ fn normalize_labels(labels: List(String)) -> Result(List(String), String) {
         Ok(label) ->
           Error(
             "label \""
-              <> label
-              <> "\" contains whitespace; use hyphens or underscores",
+            <> label
+            <> "\" contains whitespace; use hyphens or underscores",
           )
         Error(_) -> Ok(list.unique(labels))
       }
@@ -554,19 +556,14 @@ fn normalize_labels(labels: List(String)) -> Result(List(String), String) {
 fn label_has_whitespace(label: String) -> Bool {
   label
   |> string.to_graphemes
-  |> list.any(fn(grapheme) {
-    list.contains([" ", "\t", "\n", "\r"], grapheme)
-  })
+  |> list.any(fn(grapheme) { list.contains([" ", "\t", "\n", "\r"], grapheme) })
 }
 
 /// The Jira edit-issue body that replaces an issue's labels. Exposed for
 /// tests.
 pub fn labels_update_body(labels: List(String)) -> String {
   json.object([
-    #(
-      "fields",
-      json.object([#("labels", json.array(labels, json.string))]),
-    ),
+    #("fields", json.object([#("labels", json.array(labels, json.string))])),
   ])
   |> json.to_string
 }
@@ -575,14 +572,14 @@ pub fn labels_update_body(labels: List(String)) -> String {
 
 /// With a per-request connection this small helper keeps the handlers tidy;
 /// every view operation needs open+migrate first.
-fn with_views(
-  next: fn(sqlight.Connection) -> wisp.Response,
-) -> wisp.Response {
+fn with_views(next: fn(sqlight.Connection) -> wisp.Response) -> wisp.Response {
   case db.open() {
-    Error(error) -> json_error("database_unavailable", string.inspect(error), 500)
+    Error(error) ->
+      json_error("database_unavailable", string.inspect(error), 500)
     Ok(conn) ->
       case db.migrate(conn) {
-        Error(error) -> json_error("database_unavailable", string.inspect(error), 500)
+        Error(error) ->
+          json_error("database_unavailable", string.inspect(error), 500)
         Ok(_) -> next(conn)
       }
   }
@@ -606,7 +603,8 @@ fn list_views() -> wisp.Response {
         ])
         |> json.to_string
         |> wisp.json_response(200)
-      Error(error) -> json_error("database_read_failed", string.inspect(error), 500)
+      Error(error) ->
+        json_error("database_read_failed", string.inspect(error), 500)
     }
   })
 }
@@ -621,14 +619,12 @@ fn create_view(request: wisp.Request) -> wisp.Response {
     Error(message) -> json_error("bad_request", message, 400)
     Ok(view) ->
       with_views(fn(conn) {
-        let view =
-          types.ViewDef(
-            ..view,
-            id: db.unique_view_id(conn, view.name),
-          )
+        let view = types.ViewDef(..view, id: db.unique_view_id(conn, view.name))
         case db.create_view(conn, view) {
           Ok(_) ->
-            types.view_to_json(view) |> json.to_string |> wisp.json_response(201)
+            types.view_to_json(view)
+            |> json.to_string
+            |> wisp.json_response(201)
           Error(error) -> db_error_response(error, "create_failed")
         }
       })
@@ -647,10 +643,7 @@ fn update_view(request: wisp.Request, view_id: String) -> wisp.Response {
       with_views(fn(conn) {
         case db.update_view(conn, view_id, view) {
           Ok(_) ->
-            types.ViewDef(
-              ..view,
-              id: view_id,
-            )
+            types.ViewDef(..view, id: view_id)
             |> types.view_to_json
             |> json.to_string
             |> wisp.json_response(200)
@@ -693,8 +686,7 @@ pub fn parse_view_body(body: String) -> Result(types.ViewDef, String) {
         name ->
           case jql, board_id {
             None, None -> Error("set jql or board_id")
-            Some(_), Some(_) ->
-              Error("set either jql or board_id, not both")
+            Some(_), Some(_) -> Error("set either jql or board_id, not both")
             Some(jql), None ->
               case jql {
                 "" -> Error("jql must not be empty")
@@ -760,8 +752,7 @@ fn boards() -> wisp.Response {
 /// response shape as /jira/search.
 fn board_issues(request: wisp.Request, board_id: String) -> wisp.Response {
   case int.parse(board_id) {
-    Error(_) ->
-      json_error("bad_request", "board id must be an integer", 400)
+    Error(_) -> json_error("bad_request", "board id must be an integer", 400)
     Ok(board_id) -> {
       let view_id = case list.key_find(wisp.get_query(request), "view") {
         Ok(view_id) -> view_id
