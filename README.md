@@ -22,6 +22,16 @@ support, or stability promise.
   never reach the browser.
 - Local SQLite database for views and ordering. No telemetry.
 
+## Screenshots
+
+**List view**
+
+![List view](docs/screenshots/list-view.png)
+
+**Issue detail**
+
+![Issue detail](docs/screenshots/detail-view.png)
+
 ## Requirements
 
 - Gleam 1.19+ and Erlang/OTP 27+ (developed on OTP 29).
