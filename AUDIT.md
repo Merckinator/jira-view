@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **18 / 19 decided, 18 / 19 repo changes done** (finding 1 still needs
+Progress: **19 / 19 decided, 19 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -324,7 +324,7 @@ a manual token rotation at Atlassian).
     `Board(0)`. Removed the unused `PickBoardSource` message and
     `source_board_of` helper. UI tests 16 passed; bundle rebuilt.
 
-- [ ] **19. Enter on a focused button opens the row instead**
+- [x] **19. Enter on a focused button opens the row instead**
   - **Files:** `ui/src/jira_view_ui/keyboard_ffi.mjs:11-31`
   - **What:** The key handler skips inputs, textareas and selects, but not
     buttons or links, and calls `preventDefault()` for Enter.
@@ -333,7 +333,10 @@ a manual token rotation at Atlassian).
     works.
   - **Fix:** Skip the handler when the event target is inside a `button` or `a`.
   - **If skipped:** Keyboard users cannot use Enter on controls.
-  - **Decision:** _pending_
+  - **Decision:** The handler now ignores events whose target is inside
+    `input`, `textarea`, `select`, `button`, `a`, `[contenteditable='true']` or
+    `[role='button']` (plus the existing `isContentEditable` check). Bundle
+    rebuilt; UI tests 16 passed.
 
 ---
 

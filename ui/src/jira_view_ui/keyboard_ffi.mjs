@@ -1,9 +1,10 @@
 // Document-level keyboard bindings for the issues table (vim-style).
 //
 // Attached exactly once (module flag survives app restarts/HMR); targets
-// that take free-form input are skipped so typing in the JQL box is never
-// hijacked. `combos` is the whitelist — anything not on it is ignored, so
-// update only ever hears keys it asked for.
+// that take free-form input or activate on Enter (inputs, buttons, links) are
+// skipped so typing and keyboard activation are never hijacked. `combos` is
+// the whitelist — anything not on it is ignored, so update only ever hears
+// keys it asked for.
 export function attach_keys(combos, on_key) {
   if (window.__jira_view_keys_attached) return;
   window.__jira_view_keys_attached = true;
@@ -18,13 +19,13 @@ export function attach_keys(combos, on_key) {
       return;
     }
     const target = event.target;
-    const tag = target && target.tagName;
-    if (
-      tag === "INPUT" ||
-      tag === "TEXTAREA" ||
-      tag === "SELECT" ||
-      target.isContentEditable
-    ) {
+    const interactive =
+      target &&
+      target.closest &&
+      target.closest(
+        "input, textarea, select, button, a, [contenteditable='true'], [role='button']",
+      );
+    if (interactive || (target && target.isContentEditable)) {
       return;
     }
     event.preventDefault();
