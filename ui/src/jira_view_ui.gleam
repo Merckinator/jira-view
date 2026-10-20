@@ -105,7 +105,6 @@ pub type Msg {
   EditExisting
   CancelEdit
   PickJqlSource
-  PickBoardSource
   SetEditName(String)
   SetEditJql(String)
   SetEditBoard(Int)
@@ -236,20 +235,6 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       case model.edit {
         Some(form) ->
           #(Model(..model, edit: Some(EditForm(..form, source: types.Jql("")))), effect.none())
-        None -> #(model, effect.none())
-      }
-    PickBoardSource ->
-      case model.edit {
-        Some(form) -> #(
-          Model(
-            ..model,
-            edit: Some(EditForm(
-              ..form,
-              source: source_board_of(model.boards, form.source),
-            )),
-          ),
-          effect.none(),
-        )
         None -> #(model, effect.none())
       }
     SetEditName(name) ->
@@ -685,19 +670,6 @@ fn new_edit_form() -> EditForm {
     columns: default_columns,
     confirm_delete: False,
   )
-}
-
-/// Board mode starts on the first loaded board (placeholder id 0 until the
-/// boards arrive; the select then shows the options).
-fn source_board_of(
-  boards: Option(Result(List(types.AgileBoard), String)),
-  previous: types.ViewSource,
-) -> types.ViewSource {
-  case boards {
-    Some(Ok([types.AgileBoard(id, _, _), ..])) -> types.Board(id)
-    Some(Ok([])) -> types.Board(0)
-    _ -> previous
-  }
 }
 
 fn set_column(columns: List(String), column: String, checked: Bool) -> List(String) {
@@ -1365,9 +1337,17 @@ fn edit_panel(model: Model, form: EditForm) -> Element(Msg) {
       }),
     ])),
     html.div([attribute.class("jv-edit-actions")], [
-      html.button([attribute.class("jv-save-view"), event.on_click(SaveView)], [
-        text("Save view"),
-      ]),
+      html.button(
+        [
+          attribute.class("jv-save-view"),
+          attribute.disabled(case form.source {
+            types.Board(0) -> True
+            _ -> False
+          }),
+          event.on_click(SaveView),
+        ],
+        [text("Save view")],
+      ),
       html.button([attribute.class("jv-cancel-edit"), event.on_click(CancelEdit)], [
         text("Cancel"),
       ]),
@@ -1439,13 +1419,21 @@ fn source_select(
       case boards {
         None -> [
           html.option(
-            [attribute.value("loading"), attribute.selected(False)],
+            [
+              attribute.value("loading"),
+              attribute.selected(False),
+              attribute.disabled(True),
+            ],
             "loading boards…",
           )
         ]
         Some(Error(_)) -> [
           html.option(
-            [attribute.value("loaderr"), attribute.selected(False)],
+            [
+              attribute.value("loaderr"),
+              attribute.selected(False),
+              attribute.disabled(True),
+            ],
             "boards unavailable",
           )
         ]

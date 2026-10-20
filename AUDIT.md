@@ -17,7 +17,7 @@ Baseline: `gleam test` → 48 passed. Findings 2, 3, 5 and 8 were confirmed with
 throwaway tests in a copy of the repo; finding 2 was also confirmed with `curl`.
 No application code has been changed yet.
 
-Progress: **17 / 19 decided, 17 / 19 repo changes done** (finding 1 still needs
+Progress: **18 / 19 decided, 18 / 19 repo changes done** (finding 1 still needs
 a manual token rotation at Atlassian).
 
 ---
@@ -310,7 +310,7 @@ a manual token rotation at Atlassian).
   - **Decision:** Renamed the label to "board · all issues" and the CSS class
     to `jv-board-note`. Bundle rebuilt; UI tests 16 passed.
 
-- [ ] **18. Choosing Board before boards load silently does nothing**
+- [x] **18. Choosing Board before boards load silently does nothing**
   - **Files:** `ui/src/jira_view_ui.gleam:230-243`, `589-598`
   - **What:** `PickBoardSource` keeps the previous source while `boards` is
     still `None`.
@@ -319,7 +319,10 @@ a manual token rotation at Atlassian).
   - **Fix:** Switch to a `Board(0)` placeholder and disable Save until boards
     load, or fetch boards before opening the editor.
   - **If skipped:** A small but confusing dead click.
-  - **Decision:** _pending_
+  - **Decision:** Disabled the "loading boards…" and "boards unavailable"
+    options, so they cannot be chosen; Save is disabled while the source is
+    `Board(0)`. Removed the unused `PickBoardSource` message and
+    `source_board_of` helper. UI tests 16 passed; bundle rebuilt.
 
 - [ ] **19. Enter on a focused button opens the row instead**
   - **Files:** `ui/src/jira_view_ui/keyboard_ffi.mjs:11-31`
