@@ -1,7 +1,7 @@
 name = "shared"
-version = "1.0.0"
-
+version = "0.1.0"
 description = "Pure shared code of jira-view: Jira types + decoders, compiles to Erlang and JS"
+licences = ["MIT"]
 
 [dependencies]
 gleam_json = ">= 2.3.0 and < 4.0.0"

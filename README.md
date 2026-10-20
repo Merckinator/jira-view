@@ -1,42 +1,112 @@
-# jira_view
+# jira-view
 
-A private, local front-end for Jira Cloud — views, filters, and manually
-re-ordered issues that live on your machine only (see [PLAN.md](PLAN.md)).
+A local, single-user front-end for Jira Cloud — saved views, custom columns,
+and drag-and-drop ordering that stays on your machine.
 
-Currently Phase 5: saved **views** — each with its own source (a bounded JQL
-query or a board's issues via the Agile API), its own columns and its own
-private ordering — plus **writes without leaving the app**: transitions,
-comments and work log.
+This started as a toy project to learn Gleam, Lustre, Wisp/Mist and SQLite, and
+to make my own Jira workflow a little nicer. It is shared mainly so I can use it
+from another machine. Issues and small PRs are welcome, but there is no roadmap,
+support, or stability promise.
+
+> Not affiliated with or endorsed by Atlassian. Jira is a trademark of Atlassian.
+
+## What it does
+
+- Saved views, each with its own JQL query or board source, columns, and private
+  ordering.
+- Drag-and-drop row ordering (or keyboard shortcuts) layered over Jira's sort;
+  new issues append at the end.
+- Inline issue detail with transitions, comments, work logs, labels, and
+  attachment previews.
+- Talks to Jira Cloud through a local proxy; credentials stay in `.env` and
+  never reach the browser.
+- Local SQLite database for views and ordering. No telemetry.
+
+## Requirements
+
+- Gleam 1.19+ and Erlang/OTP 27+ (developed on OTP 29).
+- Node.js 20+ only if you want to rebuild or test the UI.
+- A Jira Cloud site and an API token. Jira Server/Data Center is not supported.
 
 ## Run
 
-1. Copy `.env.example` to `.env` and fill it in. Create an API token at
-   <https://id.atlassian.com/manage-profile/security/api-tokens>.
-2. `./dev.sh`, then open <http://127.0.0.1:8787/>. That URL serves the app;
-   `/api/me` stays as the credential probe.
+1. Copy the example config and fill it in:
+
+   ```sh
+   cp .env.example .env
+   ```
+
+   Create an API token at
+   <https://id.atlassian.com/manage-profile/security/api-tokens>. Use a
+   dedicated or scoped token if your Jira plan allows it.
+
+2. Start the app:
+
+   ```sh
+   ./dev.sh
+   ```
+
+   Then open <http://127.0.0.1:8787/>. `dev.sh` rebuilds the UI when esbuild
+   is available and otherwise uses the committed `assets/app.js`.
+
+Configuration is read from the environment on each request:
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `JIRA_EMAIL` | yes | The email associated with the API token. |
+| `JIRA_API_TOKEN` | yes | Stored only in `.env`. |
+| `JIRA_BASE_URL` | yes | Must be `https://`, without a trailing slash. |
+| `JIRA_VIEW_PORT` | no | Defaults to `8787`. |
+| `JIRA_VIEW_DB` | no | Defaults to `jira-view.db` in the current directory. |
+
+`.env`, the SQLite database, and test artifacts are gitignored.
 
 ## Views & ordering
 
 - Drag rows by the `⋮⋮` handle; each view's order is saved to the local
   `view_issues` table on every drop and re-applied over Jira's sort on the
-  next fetch (new issues append at the end).
+  next fetch.
 - Keyboard: `j`/`k` move the focus cursor, `Shift+j`/`Shift+k` relocate the
   focused row, `Enter` opens its detail in place of the list, `Esc` returns
   to the list.
-- Views: pick in the toolbar, `+ New view` to create, `Edit` to rename /
-  re-source (JQL or a board's issues) / choose columns / delete. The JQL box
-  + Refresh run the edited query without saving it — saving is explicit.
+- Views: pick one in the toolbar, `+ New view` to create, `Edit` to rename,
+  re-source (JQL or a board's issues), choose columns, or delete. The JQL box
+  + Refresh run the edited query without saving it; saving is explicit.
 - In the detail panel: transition buttons (required `resolution` fields get a
   picker, others are refused with Jira's field list), a comment box, a
   work-log form, and label chips with add/remove controls — all optimistic,
   undone by a refetch on failure. Attachments render inline (or download)
   through the local proxy. List rows show labels under the summary.
+- A view is capped at 2000 issues.
+
+## Security & limitations
+
+- The server binds `127.0.0.1` and rejects non-local `Host` headers. Do not
+  expose it through a reverse proxy or bind it to `0.0.0.0`.
+- The Jira email and API token live in `.env` on your machine. The browser only
+  talks to local `/jira/*` endpoints, which proxy Jira with those credentials.
+- Writes require `Content-Type: application/json`, which blocks simple
+  cross-site form posts.
+- Single user. There is no login, multi-user support, or hosted mode.
+- Jira Cloud only; Jira Server/Data Center is not supported.
 
 ## Development
 
 ```sh
-gleam test                                  # Backend tests (Erlang target)
-(cd ui && gleam test --target javascript)   # Frontend tests (Node)
-npm --prefix ui install                     # once, for the frontend build
-./build.sh                                  # Rebuild the ui/ bundle into assets/app.js
+gleam test                                  # backend tests (Erlang target)
+(cd shared && gleam test)                   # shared tests
+(cd ui && gleam test --target javascript)   # UI tests (needs npm install)
+npm --prefix ui install                     # once, for the UI build and tests
+./build.sh                                  # rebuild assets/app.js
 ```
+
+`assets/app.js` is committed because the backend serves it as-is. After UI
+changes, run `./build.sh` and commit the rebuilt bundle.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Third-party components bundled into
+`assets/app.js` are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Jira is a trademark of Atlassian. This project is not affiliated with or
+endorsed by Atlassian.

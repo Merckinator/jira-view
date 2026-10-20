@@ -1,6 +1,6 @@
 import gleam/json.{parse}
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{Some}
 import gleeunit
 import gleeunit/should
 import shared/adf
