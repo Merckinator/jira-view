@@ -65,6 +65,8 @@ fn handle_local_request(request: wisp.Request) -> wisp.Response {
       wisp.require_method(request, http.Post, fn() { comment(request, key) })
     ["jira", "issue", key, "worklog"] ->
       wisp.require_method(request, http.Post, fn() { worklog(request, key) })
+    ["jira", "issue", key, "labels"] ->
+      wisp.require_method(request, http.Put, fn() { update_labels(request, key) })
     ["jira", "attachment", attachment_id] ->
       wisp.require_method(request, http.Get, fn() { attachment(attachment_id) })
     ["jira", "avatar", account_id] ->
@@ -487,6 +489,86 @@ pub fn parse_worklog_body(body: String) -> Result(String, String) {
     Ok(time_spent) -> Ok(string.trim(time_spent))
     Error(_) -> Error("expected {\"time_spent\": \"…\"} JSON")
   }
+}
+
+/// PUT /jira/issue/:key/labels — body {"labels": ["one", "two"]}. Jira's
+/// edit-issue endpoint replaces the whole labels array, so the UI sends the
+/// complete new list; the normalized list comes back in the response.
+fn update_labels(request: wisp.Request, key: String) -> wisp.Response {
+  use <- wisp.require_content_type(request, "application/json")
+  use body <- wisp.require_string_body(request)
+  case parse_labels_body(body) {
+    Error(message) -> json_error("bad_request", message, 400)
+    Ok(labels) ->
+      case config.load() {
+        Error(message) -> json_error("configuration_incomplete", message, 503)
+        Ok(cfg) ->
+          case
+            jira.put(cfg, jira.issue_path(key), labels_update_body(labels))
+          {
+            Ok(_) ->
+              json.object([
+                #("labels", json.array(labels, json.string)),
+              ])
+              |> json.to_string
+              |> wisp.json_response(200)
+            Error(error) -> jira_error_response(error)
+          }
+      }
+  }
+}
+
+/// The labels request body shape {"labels": ["label", ...]}. Labels are
+/// trimmed, deduplicated, and refused when empty or containing whitespace
+/// (Jira labels are single tokens; use hyphens or underscores). Exposed for
+/// tests.
+pub fn parse_labels_body(body: String) -> Result(List(String), String) {
+  case json.parse(body, labels_body_decoder()) {
+    Error(_) -> Error("expected {\"labels\": [\"label\", ...] } JSON")
+    Ok(labels) -> normalize_labels(labels)
+  }
+}
+
+fn labels_body_decoder() -> decode.Decoder(List(String)) {
+  use labels <- decode.field("labels", decode.list(decode.string))
+  decode.success(labels)
+}
+
+fn normalize_labels(labels: List(String)) -> Result(List(String), String) {
+  let labels = list.map(labels, string.trim)
+  case list.find(labels, fn(label) { label == "" }) {
+    Ok(_) -> Error("labels must not be empty")
+    Error(_) ->
+      case list.find(labels, label_has_whitespace) {
+        Ok(label) ->
+          Error(
+            "label \""
+              <> label
+              <> "\" contains whitespace; use hyphens or underscores",
+          )
+        Error(_) -> Ok(list.unique(labels))
+      }
+  }
+}
+
+fn label_has_whitespace(label: String) -> Bool {
+  label
+  |> string.to_graphemes
+  |> list.any(fn(grapheme) {
+    list.contains([" ", "\t", "\n", "\r"], grapheme)
+  })
+}
+
+/// The Jira edit-issue body that replaces an issue's labels. Exposed for
+/// tests.
+pub fn labels_update_body(labels: List(String)) -> String {
+  json.object([
+    #(
+      "fields",
+      json.object([#("labels", json.array(labels, json.string))]),
+    ),
+  ])
+  |> json.to_string
 }
 
 // ————— saved views (Phase 5) —————

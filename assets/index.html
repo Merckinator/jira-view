@@ -71,6 +71,29 @@
         border: 1px solid #8884; border-radius: 6px; background: none;
       }
       .jv-transition:hover { background: #8882; }
+      /* labels */
+      .jv-labels {
+        display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem;
+      }
+      .jv-label {
+        display: inline-flex; align-items: center; gap: 0.15rem;
+        font-size: 0.7rem; line-height: 1.2; padding: 0.05rem 0.4rem;
+        border-radius: 999px; background: #8882; white-space: nowrap;
+      }
+      .jv-label-remove {
+        border: 0; background: none; padding: 0; color: #888;
+        font-size: 0.75rem; line-height: 1;
+      }
+      .jv-label-remove:hover { color: #c0392b; }
+      .jv-labels-section { margin: 0.35rem 0 0.5rem; }
+      .jv-labels-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+      .jv-labels-row .jv-labels { margin-top: 0; }
+      .jv-label-form { display: flex; gap: 0.35rem; margin-top: 0.35rem; }
+      .jv-label-input {
+        width: 11rem; padding: 0.2rem 0.4rem;
+        border: 1px solid #8884; border-radius: 6px; font-size: 0.8rem;
+      }
+      .jv-label-add { font-size: 0.8rem; padding: 0.2rem 0.55rem; }
       .jv-section-title {
         font-size: 0.8rem; margin: 0.9rem 0 0.3rem; color: #888;
         font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;

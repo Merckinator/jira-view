@@ -82,6 +82,19 @@ pub fn post_json_raw(
   })
 }
 
+/// PUT a JSON document; successes carry no usable payload.
+pub fn put_json(
+  url: String,
+  body: String,
+  to_msg: fn(Result(Nil, String)) -> msg,
+) -> Effect(msg) {
+  effect.from(fn(dispatch) {
+    put_json_ffi(url, body, fn(result) {
+      dispatch(to_msg(as_nil(result)))
+    })
+  })
+}
+
 /// PUT a JSON document and map the raw response body into a message.
 pub fn put_json_raw(
   url: String,

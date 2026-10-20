@@ -66,6 +66,7 @@ pub type Model {
     pending_comments: List(String),
     worklog_draft: String,
     pending_worklog: List(String),
+    label_draft: String,
   )
 }
 
@@ -140,6 +141,10 @@ pub type Msg {
   SetWorklogDraft(String)
   WorklogClicked
   GotWorklog(Result(types.WorklogEntry, String))
+  SetLabelDraft(String)
+  AddLabel
+  RemoveLabel(label: String)
+  GotLabels(key: String, result: Result(Nil, String))
 }
 
 pub fn main() {
@@ -181,6 +186,7 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       pending_comments: [],
       worklog_draft: "",
       pending_worklog: [],
+      label_draft: "",
     ),
     effect.batch([
       fetch_views(),
@@ -612,6 +618,23 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       ),
       effect.none(),
     )
+    SetLabelDraft(text) -> #(
+      Model(..model, label_draft: text),
+      effect.none(),
+    )
+    AddLabel -> add_label(model)
+    RemoveLabel(label) -> remove_label(model, label)
+    GotLabels(_, Ok(_)) -> #(model, effect.none())
+    GotLabels(key, Error(message)) ->
+      case is_selected(model, key) {
+        True -> #(
+          Model(..model, write_error: Some(message)),
+          // The optimistic change is rolled back by the fresh detail; its
+          // response also syncs the matching list row.
+          fetch_detail(key),
+        )
+        False -> #(model, effect.none())
+      }
   }
 }
 
@@ -652,6 +675,7 @@ fn switch_to_view(model: Model, view: types.ViewDef) -> #(Model, Effect(Msg)) {
       pending_comments: [],
       worklog_draft: "",
       pending_worklog: [],
+      label_draft: "",
     ),
     fetch_issues_effect(view),
   )
@@ -851,6 +875,7 @@ fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
       pending_comments: [],
       worklog_draft: "",
       pending_worklog: [],
+      label_draft: "",
     ),
     effect.batch([fetch_detail(key), fetch_transitions(key), resolutions_effect]),
   )
@@ -1048,6 +1073,16 @@ fn post_worklog(key: String, time_spent: String) -> Effect(Msg) {
   )
 }
 
+/// Replace the issue's labels with the full list (Jira's edit-issue shape).
+fn save_labels(key: String, labels: List(String)) -> Effect(Msg) {
+  fetch.put_json(
+    "/jira/issue/" <> key <> "/labels",
+    json.object([#("labels", json.array(labels, json.string))])
+    |> json.to_string,
+    fn(result) { GotLabels(key, result) },
+  )
+}
+
 /// The created-record responses are {"comment": {…}} / {"worklog": {…}}:
 /// decode straight to the inner record.
 fn created_comment_decoder() -> decode.Decoder(types.Comment) {
@@ -1126,6 +1161,107 @@ fn drop_first(items: List(a)) -> List(a) {
     [_, ..rest] -> rest
     [] -> []
   }
+}
+
+// ————— label editing —————
+
+/// Add the trimmed draft to the open issue's labels (no duplicates) and
+/// persist the whole new list. Labels are single tokens; Jira rejects spaces.
+fn add_label(model: Model) -> #(Model, Effect(Msg)) {
+  case model.selected {
+    Some(DetailLoaded(info)) -> {
+      let label = string.trim(model.label_draft)
+      case label {
+        "" -> #(model, effect.none())
+        _ ->
+          case label_has_whitespace(label) {
+            True -> #(
+              Model(
+                ..model,
+                write_error: Some("Labels can't contain spaces."),
+              ),
+              effect.none(),
+            )
+            False ->
+              case list.contains(info.issue.labels, label) {
+                True -> #(Model(..model, label_draft: ""), effect.none())
+                False -> {
+                  let labels = list.append(info.issue.labels, [label])
+                  let model = with_labels(model, info.issue.key, labels)
+                  #(
+                    Model(..model, label_draft: "", write_error: None),
+                    save_labels(info.issue.key, labels),
+                  )
+                }
+              }
+          }
+      }
+    }
+    _ -> #(model, effect.none())
+  }
+}
+
+fn remove_label(model: Model, label: String) -> #(Model, Effect(Msg)) {
+  case model.selected {
+    Some(DetailLoaded(info)) ->
+      case list.contains(info.issue.labels, label) {
+        False -> #(model, effect.none())
+        True -> {
+          let labels =
+            list.filter(info.issue.labels, fn(existing) { existing != label })
+          let model =
+            Model(
+              ..with_labels(model, info.issue.key, labels),
+              write_error: None,
+            )
+          #(model, save_labels(info.issue.key, labels))
+        }
+      }
+    _ -> #(model, effect.none())
+  }
+}
+
+/// Apply a label change to both the open detail and its list row.
+fn with_labels(model: Model, key: String, labels: List(String)) -> Model {
+  Model(
+    ..model,
+    state: set_issue_labels(model.state, key, labels),
+    selected: set_detail_labels(model.selected, labels),
+  )
+}
+
+fn set_detail_labels(
+  selected: Option(Detail),
+  labels: List(String),
+) -> Option(Detail) {
+  case selected {
+    Some(DetailLoaded(info)) ->
+      Some(DetailLoaded(types.IssueDetail(
+        ..info,
+        issue: types.Issue(..info.issue, labels: labels),
+      )))
+    selected -> selected
+  }
+}
+
+fn set_issue_labels(state: State, key: String, labels: List(String)) -> State {
+  case state {
+    Ready(issues) ->
+      Ready(
+        map_issue(issues, key, fn(issue) {
+          types.Issue(..issue, labels: labels)
+        }),
+      )
+    state -> state
+  }
+}
+
+fn label_has_whitespace(label: String) -> Bool {
+  label
+  |> string.to_graphemes
+  |> list.any(fn(grapheme) {
+    list.contains([" ", "\t", "\n", "\r"], grapheme)
+  })
 }
 
 fn append_comment(
@@ -1531,12 +1667,27 @@ fn grab_cell() -> Element(Msg) {
 fn view_cell(issue: Issue, column: String) -> Element(Msg) {
   case column {
     "key" -> cell(issue.key)
-    "summary" -> cell(issue.summary)
+    "summary" -> summary_cell(issue)
     "status" -> cell(issue.status.name)
     "assignee" -> assignee_cell(issue)
     "updated" -> cell(issue.updated)
     _ -> cell("")
   }
+}
+
+/// The summary cell also carries the issue's labels, so existing saved views
+/// show them without a column-config change.
+fn summary_cell(issue: Issue) -> Element(Msg) {
+  html.td([], [
+    text(issue.summary),
+    keyed.element(
+      "div",
+      [attribute.class("jv-labels")],
+      list.map(issue.labels, fn(label) {
+        #(label, html.span([attribute.class("jv-label")], [text(label)]))
+      }),
+    ),
+  ])
 }
 
 fn assignee_cell(issue: Issue) -> Element(Msg) {
@@ -1583,6 +1734,7 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
               html.p([attribute.class("jv-write-error")], [text(message)])
             None -> element.none()
           },
+          labels_section(model, info.issue.labels),
           transitions_row(model),
           adf_view.render(info.description),
           attachments_section(info.attachments),
@@ -1598,6 +1750,55 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
           ),
         ])
     },
+  ])
+}
+
+/// The open issue's labels with per-chip remove buttons and an add form. The
+/// chip container and form keep stable DOM paths (only the keyed chips
+/// change), so Lustre's event handlers stay attached.
+fn labels_section(model: Model, labels: List(String)) -> Element(Msg) {
+  html.div([attribute.class("jv-labels-section")], [
+    html.div([attribute.class("jv-labels-row")], [
+      html.span([attribute.class("jv-note")], [text("Labels:")]),
+      keyed.element(
+        "div",
+        [attribute.class("jv-labels")],
+        list.map(labels, fn(label) {
+          #(
+            label,
+            html.span([attribute.class("jv-label")], [
+              text(label),
+              html.button(
+                [
+                  attribute.class("jv-label-remove"),
+                  attribute.title("Remove " <> label),
+                  event.on_click(RemoveLabel(label)),
+                ],
+                [text("×")],
+              ),
+            ]),
+          )
+        }),
+      ),
+    ]),
+    html.div([attribute.class("jv-label-form")], [
+      html.input([
+        attribute.type_("text"),
+        attribute.class("jv-label-input"),
+        attribute.placeholder("Add label…"),
+        attribute.value(model.label_draft),
+        event.on_input(SetLabelDraft),
+        event.on_keydown(fn(key) {
+          case key {
+            "Enter" -> AddLabel
+            _ -> NoOp
+          }
+        }),
+      ]),
+      html.button([attribute.class("jv-label-add"), event.on_click(AddLabel)], [
+        text("Add"),
+      ]),
+    ]),
   ])
 }
 

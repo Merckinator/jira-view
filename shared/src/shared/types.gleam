@@ -42,6 +42,8 @@ pub type Issue {
     summary: String,
     status: Status,
     assignee: Option(User),
+    /// Jira labels (fields.labels); empty when the issue has none.
+    labels: List(String),
     /// ISO timestamp string as reported by Jira.
     updated: String,
   )
@@ -191,8 +193,13 @@ pub fn issue_decoder() -> decode.Decoder(Issue) {
     None,
     decode.optional(user_decoder()),
   ))
+  use labels <- decode.then(decode.optionally_at(
+    ["fields", "labels"],
+    [],
+    decode.list(decode.string),
+  ))
   use updated <- decode.subfield(["fields", "updated"], decode.string)
-  decode.success(Issue(key:, id:, summary:, status:, assignee:, updated:))
+  decode.success(Issue(key:, id:, summary:, status:, assignee:, labels:, updated:))
 }
 
 /// Decoder for one page of GET /rest/api/3/search/jql.
@@ -238,8 +245,13 @@ fn app_issue_decoder() -> decode.Decoder(Issue) {
     None,
     decode.optional(app_user_decoder()),
   )
+  use labels <- decode.optional_field(
+    "labels",
+    [],
+    decode.list(decode.string),
+  )
   use updated <- decode.field("updated", decode.string)
-  decode.success(Issue(key:, id:, summary:, status:, assignee:, updated:))
+  decode.success(Issue(key:, id:, summary:, status:, assignee:, labels:, updated:))
 }
 
 /// Decoder for GET /rest/api/3/issue/{key} with
@@ -253,6 +265,11 @@ pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
     ["fields", "assignee"],
     None,
     decode.optional(user_decoder()),
+  ))
+  use labels <- decode.then(decode.optionally_at(
+    ["fields", "labels"],
+    [],
+    decode.list(decode.string),
   ))
   use updated <- decode.subfield(["fields", "updated"], decode.string)
   use doc <- decode.then(decode.optionally_at(
@@ -280,7 +297,7 @@ pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
     decode.list(attachment_decoder()),
   ))
   decode.success(IssueDetail(
-    issue: Issue(key:, id:, summary:, status:, assignee:, updated:),
+    issue: Issue(key:, id:, summary:, status:, assignee:, labels:, updated:),
     description:,
     comments:,
     worklog:,
@@ -472,6 +489,7 @@ pub fn issue_to_json(issue: Issue) -> Json {
     #("summary", json.string(issue.summary)),
     #("status", status_to_json(issue.status)),
     #("assignee", json.nullable(issue.assignee, of: user_to_json)),
+    #("labels", json.array(issue.labels, json.string)),
     #("updated", json.string(issue.updated)),
   ])
 }

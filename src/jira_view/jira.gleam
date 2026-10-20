@@ -35,7 +35,7 @@ pub const search_path = "/rest/api/3/search/jql"
 
 /// The `fields` allowlist sent with search requests; anything not on it is
 /// not fetched. Add a field here + to types.Issue/decoders together.
-pub const search_fields = "summary,status,assignee,updated"
+pub const search_fields = "summary,status,assignee,updated,labels"
 
 /// Rows requested per page. Jira's default is 50; 100 halves the round trips
 /// without making a single response large.
@@ -53,7 +53,7 @@ pub fn issue_path(key: String) -> String {
 /// The fields the detail panel renders (description arrives as ADF; the
 /// comment, worklog and attachment embeds drive the panel's lists).
 pub const issue_fields =
-  "summary,description,status,assignee,updated,comment,worklog,attachment"
+  "summary,description,status,assignee,updated,comment,worklog,attachment,labels"
 
 /// Paths of the transitions metadata + POST endpoints of an issue.
 pub fn transitions_path(key: String) -> String {
@@ -180,12 +180,26 @@ pub fn get_with_query(
 
 /// POST `body` (JSON) to `path`.
 pub fn post(cfg: Config, path: String, body: String) -> Result(String, JiraError) {
+  send_json(http.Post, cfg, path, body)
+}
+
+/// PUT `body` (JSON) to `path` (Jira's edit-issue endpoint).
+pub fn put(cfg: Config, path: String, body: String) -> Result(String, JiraError) {
+  send_json(http.Put, cfg, path, body)
+}
+
+fn send_json(
+  method: http.Method,
+  cfg: Config,
+  path: String,
+  body: String,
+) -> Result(String, JiraError) {
   use req <- result.try(
     request.to(cfg.base_url <> path)
     |> result.map_error(fn(_) { Api(0, "JIRA_BASE_URL could not be parsed") }),
   )
   req
-  |> request.set_method(http.Post)
+  |> request.set_method(method)
   |> request.prepend_header("authorization", basic_auth_header(cfg))
   |> request.prepend_header("accept", "application/json")
   |> request.prepend_header("content-type", "application/json")

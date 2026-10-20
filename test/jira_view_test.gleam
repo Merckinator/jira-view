@@ -160,6 +160,7 @@ fn sample_issue(
       "" -> None
       name -> Some(types.User("557058:f1a2b3c4", name, "https://x/48.png"))
     },
+    labels: [],
     updated: "2026-10-18T18:05:33.688-0400",
   )
 }
@@ -411,7 +412,7 @@ pub fn issue_detail_decoder_with_embeds_test() {
   // fields.comment / fields.worklog embeds decode through the same
   // entry decoders (verified against a live capture with one of each).
   json.parse(
-    "{\"id\":\"10013\",\"key\":\"SAM1-11\",\"fields\":{\"summary\":\"Phase 4 verification\",\"status\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"updated\":\"2026-10-18\",\"description\":null,\"comment\":{\"comments\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"created\":\"2026-10-18T19:38:02.298-0400\",\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"c1\"}]}]}}],\"total\":1},\"worklog\":{\"worklogs\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\"}],\"total\":1}}}",
+    "{\"id\":\"10013\",\"key\":\"SAM1-11\",\"fields\":{\"summary\":\"Phase 4 verification\",\"labels\":[\"phase-4\"],\"status\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"updated\":\"2026-10-18\",\"description\":null,\"comment\":{\"comments\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"created\":\"2026-10-18T19:38:02.298-0400\",\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"c1\"}]}]}}],\"total\":1},\"worklog\":{\"worklogs\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\"}],\"total\":1}}}",
     types.issue_detail_decoder(),
   )
   |> should.equal(Ok(types.IssueDetail(
@@ -421,6 +422,7 @@ pub fn issue_detail_decoder_with_embeds_test() {
       summary: "Phase 4 verification",
       status: types.Status("Done", "done"),
       assignee: None,
+      labels: ["phase-4"],
       updated: "2026-10-18",
     ),
     description: [],
@@ -547,6 +549,53 @@ pub fn parse_write_bodies_test() {
 
   web.parse_worklog_body("{}")
   |> should.be_error
+}
+
+// labels: request parsing + the Jira edit-issue body
+
+pub fn parse_labels_body_test() {
+  web.parse_labels_body("{\"labels\": [\"a\", \" b \", \"a\"]}")
+  |> should.equal(Ok(["a", "b"]))
+
+  web.parse_labels_body("{\"labels\": []}")
+  |> should.equal(Ok([]))
+
+  web.parse_labels_body("{\"labels\": [\"\"]}")
+  |> should.be_error
+
+  web.parse_labels_body("{\"labels\": [\"two words\"]}")
+  |> should.be_error
+
+  web.parse_labels_body("{\"tags\": []}")
+  |> should.be_error
+}
+
+pub fn labels_update_body_test() {
+  web.labels_update_body(["a", "b"])
+  |> should.equal("{\"fields\":{\"labels\":[\"a\",\"b\"]}}")
+}
+
+pub fn labels_route_bad_body_test() {
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/labels")
+    |> simulate.json_body(
+      json.object([
+        #("labels", json.array(["two words"], json.string)),
+      ]),
+    )
+  web.handle_request(request).status |> should.equal(400)
+}
+
+pub fn labels_route_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/labels")
+    |> simulate.json_body(
+      json.object([#("labels", json.array(["docs"], json.string))]),
+    )
+  web.handle_request(request).status |> should.equal(502)
 }
 
 pub fn transition_post_route_unreachable_test() {
@@ -725,6 +774,7 @@ pub fn agile_page_decoder_test() {
         summary: "Task 2",
         status: types.Status("In Progress", "indeterminate"),
         assignee: None,
+        labels: [],
         updated: "2026-10-18",
       ),
     ],

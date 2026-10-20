@@ -78,6 +78,7 @@ const sample_search_page =
       \"key\": \"KAN-1\",
       \"fields\": {
         \"summary\": \"Create a demo project\",
+        \"labels\": [\"demo\", \"docs\"],
         \"assignee\": {
           \"accountId\": \"557058:f1a2b3c4-5678\",
           \"displayName\": \"Jeff Merckens\",
@@ -104,10 +105,12 @@ pub fn decode_search_page_test() {
   first.id |> should.equal("10012")
   first.summary |> should.equal("Subtask 2.1")
   first.assignee |> should.be_none
+  first.labels |> should.equal([])
   first.status |> should.equal(types.Status("To Do", "new"))
   first.updated |> should.equal("2026-10-18T18:05:33.688-0400")
 
   second.assignee |> should.be_some
+  second.labels |> should.equal(["demo", "docs"])
   let assert Some(assignee) = second.assignee
   assignee.display_name |> should.equal("Jeff Merckens")
   assignee.account_id |> should.equal("557058:f1a2b3c4-5678")
@@ -306,6 +309,7 @@ pub fn issue_json_round_trip_test() {
         "Jeff Merckens",
         "https://x/48.png",
       )),
+      labels: ["docs", "urgent"],
       updated: "2026-10-18T18:05:18.418-0400",
     )
   let response =

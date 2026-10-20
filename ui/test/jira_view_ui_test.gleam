@@ -17,6 +17,7 @@ fn sample_issue(key: String) -> types.Issue {
     summary: key,
     status: types.Status("To Do", "new"),
     assignee: None,
+    labels: [],
     updated: "2026-10-19",
   )
 }
@@ -125,6 +126,7 @@ fn test_model() -> jira_view_ui.Model {
     pending_comments: [],
     worklog_draft: "",
     pending_worklog: [],
+    label_draft: "",
   )
 }
 
@@ -263,4 +265,67 @@ pub fn delete_requires_two_clicks_test() {
     columns: ["key"],
     confirm_delete: True,
   )))
+}
+
+// ————— labels —————
+
+fn loaded_detail(key: String, labels: List(String)) -> jira_view_ui.Detail {
+  jira_view_ui.DetailLoaded(types.IssueDetail(
+    issue: types.Issue(..sample_issue(key), labels: labels),
+    description: [],
+    comments: [],
+    worklog: [],
+    attachments: [],
+  ))
+}
+
+pub fn add_label_updates_detail_and_row_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([sample_issue("B")]),
+      selected: Some(loaded_detail("B", [])),
+      label_draft: "urgent",
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.AddLabel)
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.labels |> should.equal(["urgent"])
+
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.labels |> should.equal(["urgent"])
+
+  next.label_draft |> should.equal("")
+}
+
+pub fn remove_label_updates_detail_and_row_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([sample_issue("B")]),
+      selected: Some(loaded_detail("B", ["urgent", "docs"])),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.RemoveLabel("urgent"))
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.labels |> should.equal(["docs"])
+
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.labels |> should.equal(["docs"])
+}
+
+pub fn invalid_label_is_rejected_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: Some(loaded_detail("B", [])),
+      label_draft: "two words",
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.AddLabel)
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.labels |> should.equal([])
+
+  next.write_error
+  |> should.equal(Some("Labels can't contain spaces."))
 }

@@ -27,9 +27,10 @@ comments and work log.
   re-source (JQL or a board's issues) / choose columns / delete. The JQL box
   + Refresh run the edited query without saving it — saving is explicit.
 - In the detail panel: transition buttons (required `resolution` fields get a
-  picker, others are refused with Jira's field list), a comment box, and a
-  work-log form — all optimistic, undone by a refetch on failure. Attachments
-  render inline (or download) through the local proxy.
+  picker, others are refused with Jira's field list), a comment box, a
+  work-log form, and label chips with add/remove controls — all optimistic,
+  undone by a refetch on failure. Attachments render inline (or download)
+  through the local proxy. List rows show labels under the summary.
 
 ## Development
 
