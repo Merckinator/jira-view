@@ -115,6 +115,7 @@ pub type Msg {
   GotViewDeleted(id: String, result: Result(Nil, String))
   GotBoards(Result(List(types.AgileBoard), String))
   SetJql(String)
+  NoOp
   Refresh
   GotIssues(view_id: String, result: Result(List(Issue), String))
   FocusDown
@@ -343,6 +344,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     // — current view's issues —
     SetJql(jql) -> #(Model(..model, jql_input: jql), effect.none())
+    NoOp -> #(model, effect.none())
     Refresh ->
       case model.current_view {
         Some(view) ->
@@ -1274,6 +1276,13 @@ fn query_slot(model: Model, view: types.ViewDef) -> Element(Msg) {
           attribute.class("jv-jql-input"),
           attribute.value(model.jql_input),
           event.on_input(SetJql),
+          // Enter in the query console refreshes, like the button.
+          event.on_keydown(fn(key) {
+            case key {
+              "Enter" -> Refresh
+              _ -> NoOp
+            }
+          }),
         ])
     }
     types.Board(_) ->
