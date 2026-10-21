@@ -26,6 +26,7 @@ import jira_view_ui/fetch
 import jira_view_ui/keyboard
 import jira_view_ui/ordering
 import jira_view_ui/sortable
+import jira_view_ui/theme
 import lustre
 import lustre/attribute
 import lustre/effect.{type Effect}
@@ -51,6 +52,8 @@ pub type Model {
     boards: Option(Result(List(types.AgileBoard), String)),
     edit: Option(EditForm),
     view_error: Option(String),
+    /// Color-scheme preference: Auto/Light/Dark.
+    theme: theme.Theme,
     // — issues of the current view —
     jql_input: String,
     state: State,
@@ -120,6 +123,7 @@ pub type Msg {
   GotViewDeleted(id: String, result: Result(Nil, String))
   GotBoards(Result(List(types.AgileBoard), String))
   SetJql(String)
+  CycleTheme
   NoOp
   Refresh
   GotIssues(view_id: String, result: Result(List(Issue), String))
@@ -183,6 +187,7 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       boards: None,
       edit: None,
       view_error: None,
+      theme: theme.load(),
       jql_input: default_jql,
       state: Loading,
       cursor: None,
@@ -390,6 +395,13 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     // — current view's issues —
     SetJql(jql) -> #(Model(..model, jql_input: jql), effect.none())
+    CycleTheme -> {
+      let next = theme.next(model.theme)
+      #(
+        Model(..model, theme: next),
+        effect.from(fn(_dispatch) { theme.apply(next) }),
+      )
+    }
     NoOp -> #(model, effect.none())
     Refresh ->
       case model.current_view {
@@ -1569,7 +1581,12 @@ pub fn view(model: Model) -> Element(Msg) {
   html.div(
     [attribute.class("jv")],
     list.flatten([
-      [html.div([attribute.class("jv-toolbar")], toolbar(model))],
+      [
+        html.div(
+          [attribute.class("jv-toolbar")],
+          list.append(toolbar(model), [theme_button(model.theme)]),
+        ),
+      ],
       case model.selected {
         Some(detail) -> [detail_panel(model, detail)]
         None -> list_view(model)
@@ -1615,6 +1632,18 @@ fn columns_of(model: Model) -> List(String) {
     Some(view) -> view.columns
     None -> default_columns
   }
+}
+
+fn theme_button(current: theme.Theme) -> Element(Msg) {
+  html.button(
+    [
+      attribute.class("jv-theme"),
+      attribute.title("Color scheme: " <> theme.label(current)),
+      attribute.aria_label("Color scheme: " <> theme.label(current)),
+      event.on_click(CycleTheme),
+    ],
+    [text(theme.label(current))],
+  )
 }
 
 fn toolbar(model: Model) -> List(Element(Msg)) {

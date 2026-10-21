@@ -45,4 +45,5 @@ Gleeunit discovers every `test/**/*_test.gleam` function whose name ends in `_te
 - When adding an issue field, update the `search_fields`/`issue_fields` functions, `shared/types.gleam` and its decoders together.
 - Per-view ordering is overlaid on Jira's order by `db.merge_view_order`; a save replaces the entire key list. The tests pin these semantics.
 - The UI deliberately avoids `lustre_http` (it conflicts with stdlib 1.x) and uses `ui/src/jira_view_ui/fetch_ffi.mjs`; don't reintroduce `lustre_http`.
+- The theme is a localStorage preference (`jv-theme`) applied as `data-theme` on `<html>`; flag tints are CSS variables in `assets/index.html`. Keep `theme_ffi.mjs`, the inline head script and those CSS rules in sync.
 - `build.sh` hardcodes the esbuild input path `ui/build/dev/javascript/jira_view_ui/jira_view_ui.mjs`; update it if the UI package is renamed. It skips rebuilding when `assets/app.js` is newer than its inputs and falls back to the committed bundle when esbuild is absent. `assets/app.js` is tracked — rebuild and commit it with UI changes.

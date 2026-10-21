@@ -19,6 +19,7 @@ support, or stability promise.
 - Inline issue detail with transitions, assignee, comments, work logs, labels,
   flag toggling, and attachment previews. Flagged issues get a faint red row
   tint in the list.
+- Auto/light/dark color-scheme toggle; Auto follows the operating system.
 - Talks to Jira Cloud through a local proxy; credentials stay in `.env` and
   never reach the browser.
 - Local SQLite database for views and ordering. No telemetry.

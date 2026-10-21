@@ -4,6 +4,7 @@ import gleeunit
 import gleeunit/should
 import jira_view_ui
 import jira_view_ui/ordering
+import jira_view_ui/theme
 import shared/types
 
 pub fn main() {
@@ -150,6 +151,7 @@ fn test_model() -> jira_view_ui.Model {
     boards: None,
     edit: None,
     view_error: None,
+    theme: theme.Auto,
     jql_input: "",
     state: jira_view_ui.Loading,
     cursor: None,
@@ -554,4 +556,17 @@ pub fn flag_error_is_reported_test() {
       jira_view_ui.GotFlagged("B", Error("nope")),
     )
   next.write_error |> should.equal(Some("nope"))
+}
+
+// ————— theme —————
+
+pub fn theme_cycles_test() {
+  theme.next(theme.Auto) |> should.equal(theme.Light)
+  theme.next(theme.Light) |> should.equal(theme.Dark)
+  theme.next(theme.Dark) |> should.equal(theme.Auto)
+}
+
+pub fn cycle_theme_updates_the_model_test() {
+  let #(next, _) = jira_view_ui.update(test_model(), jira_view_ui.CycleTheme)
+  next.theme |> should.equal(theme.Light)
 }
