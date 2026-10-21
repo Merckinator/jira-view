@@ -25,6 +25,7 @@ import jira_view_ui/adf_view
 import jira_view_ui/fetch
 import jira_view_ui/keyboard
 import jira_view_ui/ordering
+import jira_view_ui/palette
 import jira_view_ui/sortable
 import jira_view_ui/theme
 import lustre
@@ -33,6 +34,7 @@ import lustre/effect.{type Effect}
 import lustre/element.{type Element, text}
 import lustre/element/html
 import lustre/element/keyed
+import lustre/element/svg
 import lustre/event
 import shared/adf
 import shared/types.{type Issue, type IssueDetail}
@@ -54,6 +56,8 @@ pub type Model {
     view_error: Option(String),
     /// Color-scheme preference: Auto/Light/Dark.
     theme: theme.Theme,
+    /// Whether the floating appearance dialog is open.
+    theme_palette_open: Bool,
     // — issues of the current view —
     jql_input: String,
     state: State,
@@ -126,6 +130,10 @@ pub type Msg {
   GotViewDeleted(id: String, result: Result(Nil, String))
   GotBoards(Result(List(types.AgileBoard), String))
   SetJql(String)
+  ToggleThemePalette
+  CloseThemePalette
+  ThemePaletteClosed
+  SetTheme(theme.Theme)
   CycleTheme
   NoOp
   Refresh
@@ -196,6 +204,7 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       edit: None,
       view_error: None,
       theme: theme.load(),
+      theme_palette_open: False,
       jql_input: default_jql,
       state: Loading,
       cursor: None,
@@ -218,6 +227,9 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       fetch_resolutions(),
       // Document-level key handler: attach once at startup (idempotent FFI).
       keyboard.attach(keyboard_bindings()),
+      effect.from(fn(dispatch) {
+        palette.attach_shortcut(fn() { dispatch(ToggleThemePalette) })
+      }),
     ]),
   )
 }
@@ -404,6 +416,25 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     // — current view's issues —
     SetJql(jql) -> #(Model(..model, jql_input: jql), effect.none())
+    ToggleThemePalette -> {
+      let open = !model.theme_palette_open
+      #(Model(..model, theme_palette_open: open), palette_effect(open))
+    }
+    CloseThemePalette -> #(
+      Model(..model, theme_palette_open: False),
+      palette_effect(False),
+    )
+    ThemePaletteClosed -> #(
+      Model(..model, theme_palette_open: False),
+      effect.none(),
+    )
+    SetTheme(next) -> #(
+      Model(..model, theme: next, theme_palette_open: False),
+      effect.batch([
+        effect.from(fn(_dispatch) { theme.apply(next) }),
+        palette_effect(False),
+      ]),
+    )
     CycleTheme -> {
       let next = theme.next(model.theme)
       #(
@@ -1668,16 +1699,12 @@ pub fn view(model: Model) -> Element(Msg) {
   html.div(
     [attribute.class("jv")],
     list.flatten([
-      [
-        html.div(
-          [attribute.class("jv-toolbar")],
-          list.append(toolbar(model), [theme_button(model.theme)]),
-        ),
-      ],
+      [html.div([attribute.class("jv-toolbar")], toolbar(model))],
       case model.selected {
         Some(detail) -> [detail_panel(model, detail)]
         None -> list_view(model)
       },
+      [theme_trigger(model), theme_dialog(model)],
     ]),
   )
 }
@@ -1721,16 +1748,222 @@ fn columns_of(model: Model) -> List(String) {
   }
 }
 
-fn theme_button(current: theme.Theme) -> Element(Msg) {
+fn palette_effect(open: Bool) -> Effect(Msg) {
+  effect.from(fn(_dispatch) {
+    case open {
+      True -> palette.open_dialog()
+      False -> palette.close_dialog()
+    }
+  })
+}
+
+fn theme_trigger(model: Model) -> Element(Msg) {
   html.button(
     [
-      attribute.class("jv-theme"),
-      attribute.title("Color scheme: " <> theme.label(current)),
-      attribute.aria_label("Color scheme: " <> theme.label(current)),
-      event.on_click(CycleTheme),
+      attribute.class("jv-theme-trigger"),
+      attribute.type_("button"),
+      attribute.title("Appearance: " <> theme.label(model.theme)),
+      attribute.aria_label("Appearance: " <> theme.label(model.theme)),
+      attribute.aria_haspopup("dialog"),
+      attribute.aria_expanded(model.theme_palette_open),
+      event.on_click(ToggleThemePalette),
     ],
-    [text(theme.label(current))],
+    [
+      theme_icon(model.theme),
+      html.span([attribute.class("jv-theme-trigger-label")], [
+        text(theme.label(model.theme)),
+      ]),
+    ],
   )
+}
+
+fn theme_dialog(model: Model) -> Element(Msg) {
+  html.dialog(
+    [
+      attribute.class("jv-theme-dialog"),
+      attribute.aria_labelledby("jv-theme-title"),
+      attribute.aria_modal(True),
+      event.on("close", decode.success(ThemePaletteClosed)),
+      event.on_keydown(fn(key) {
+        case key {
+          "t" | "T" -> CycleTheme
+          _ -> NoOp
+        }
+      }),
+    ],
+    [
+      html.div(
+        [
+          attribute.class("jv-theme-backdrop"),
+          event.on_click(CloseThemePalette),
+        ],
+        [],
+      ),
+      html.div([attribute.class("jv-theme-panel")], [
+        theme_palette_head(),
+        html.div(
+          [
+            attribute.class("jv-theme-options"),
+            attribute.role("group"),
+            attribute.aria_label("Color scheme"),
+          ],
+          list.map([theme.Auto, theme.Light, theme.Dark], fn(option) {
+            theme_option(model.theme, option)
+          }),
+        ),
+        theme_palette_footer(),
+      ]),
+    ],
+  )
+}
+
+fn theme_palette_head() -> Element(Msg) {
+  html.div([attribute.class("jv-theme-head")], [
+    html.div([], [
+      html.h2(
+        [attribute.id("jv-theme-title"), attribute.class("jv-theme-title")],
+        [text("Appearance")],
+      ),
+      html.p([attribute.class("jv-theme-subtitle")], [
+        text("Choose how jira-view looks."),
+      ]),
+    ]),
+    html.div([attribute.class("jv-theme-head-actions")], [
+      html.button(
+        [
+          attribute.class("jv-theme-cycle"),
+          attribute.type_("button"),
+          attribute.title("Cycle theme (T)"),
+          attribute.aria_label("Cycle theme"),
+          event.on_click(CycleTheme),
+        ],
+        [text("↻")],
+      ),
+      html.button(
+        [
+          attribute.class("jv-theme-close"),
+          attribute.type_("button"),
+          attribute.title("Close"),
+          attribute.aria_label("Close appearance"),
+          event.on_click(CloseThemePalette),
+        ],
+        [text("×")],
+      ),
+    ]),
+  ])
+}
+
+fn theme_option(current: theme.Theme, option: theme.Theme) -> Element(Msg) {
+  let selected = current == option
+  html.button(
+    [
+      attribute.class("jv-theme-option"),
+      attribute.type_("button"),
+      attribute.aria_pressed(case selected {
+        True -> "true"
+        False -> "false"
+      }),
+      attribute.autofocus(selected),
+      event.on_click(SetTheme(option)),
+    ],
+    [
+      theme_swatch(option),
+      html.span([attribute.class("jv-theme-option-copy")], [
+        html.span([attribute.class("jv-theme-option-label")], [
+          text(theme.label(option)),
+        ]),
+        html.span([attribute.class("jv-theme-option-desc")], [
+          text(theme.description(option)),
+        ]),
+      ]),
+      html.span(
+        [attribute.class("jv-theme-check"), attribute.aria_hidden(True)],
+        [
+          text(case selected {
+            True -> "✓"
+            False -> ""
+          }),
+        ],
+      ),
+    ],
+  )
+}
+
+fn theme_swatch(option: theme.Theme) -> Element(Msg) {
+  let variant = case option {
+    theme.Auto -> "jv-theme-swatch-auto"
+    theme.Light -> "jv-theme-swatch-light"
+    theme.Dark -> "jv-theme-swatch-dark"
+  }
+  html.span(
+    [
+      attribute.class("jv-theme-swatch " <> variant),
+      attribute.aria_hidden(True),
+    ],
+    [theme_icon(option)],
+  )
+}
+
+fn theme_icon(option: theme.Theme) -> Element(Msg) {
+  let paths = case option {
+    theme.Auto -> [
+      svg.path([attribute.attribute("d", "M3 5h18v11H3z")]),
+      svg.path([attribute.attribute("d", "M8 20h8M12 16v4")]),
+    ]
+    theme.Light -> [
+      svg.circle([
+        attribute.attribute("cx", "12"),
+        attribute.attribute("cy", "12"),
+        attribute.attribute("r", "4"),
+      ]),
+      svg.path([
+        attribute.attribute(
+          "d",
+          "M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
+        ),
+      ]),
+    ]
+    theme.Dark -> [
+      svg.path([
+        attribute.attribute(
+          "d",
+          "M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z",
+        ),
+      ]),
+    ]
+  }
+  html.svg(
+    [
+      attribute.class("jv-theme-icon"),
+      attribute.attribute("viewBox", "0 0 24 24"),
+      attribute.attribute("fill", "none"),
+      attribute.attribute("stroke", "currentColor"),
+      attribute.attribute("stroke-width", "1.7"),
+      attribute.attribute("stroke-linecap", "round"),
+      attribute.attribute("stroke-linejoin", "round"),
+      attribute.aria_hidden(True),
+    ],
+    paths,
+  )
+}
+
+fn theme_palette_footer() -> Element(Msg) {
+  html.div([attribute.class("jv-theme-foot")], [
+    html.span([attribute.class("jv-theme-hint")], [
+      html.kbd([attribute.class("jv-theme-kbd")], [text("T")]),
+      text(" cycle"),
+    ]),
+    html.span([attribute.class("jv-theme-hint")], [
+      html.kbd([attribute.class("jv-theme-kbd")], [text("Esc")]),
+      text(" close"),
+    ]),
+    html.span([attribute.class("jv-theme-hint")], [
+      html.kbd([attribute.class("jv-theme-kbd")], [
+        text(palette.shortcut_label()),
+      ]),
+      text(" toggle"),
+    ]),
+  ])
 }
 
 fn toolbar(model: Model) -> List(Element(Msg)) {

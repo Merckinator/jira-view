@@ -11,6 +11,9 @@ export function attach_keys(combos, on_key) {
   window.__jira_view_keys_attached = true;
   const handled = new Set(combos);
   document.addEventListener("keydown", (event) => {
+    // A modal dialog owns its keys (Escape must not also close the detail
+    // behind the appearance palette).
+    if (document.querySelector("dialog[open]")) return;
     if (
       event.ctrlKey ||
       event.altKey ||

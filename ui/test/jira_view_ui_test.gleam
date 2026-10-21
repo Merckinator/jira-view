@@ -152,6 +152,7 @@ fn test_model() -> jira_view_ui.Model {
     edit: None,
     view_error: None,
     theme: theme.Auto,
+    theme_palette_open: False,
     jql_input: "",
     state: jira_view_ui.Loading,
     cursor: None,
@@ -694,4 +695,33 @@ pub fn theme_cycles_test() {
 pub fn cycle_theme_updates_the_model_test() {
   let #(next, _) = jira_view_ui.update(test_model(), jira_view_ui.CycleTheme)
   next.theme |> should.equal(theme.Light)
+}
+
+pub fn theme_palette_toggles_test() {
+  let #(open, _) =
+    jira_view_ui.update(test_model(), jira_view_ui.ToggleThemePalette)
+  open.theme_palette_open |> should.be_true
+
+  let #(closed, _) = jira_view_ui.update(open, jira_view_ui.CloseThemePalette)
+  closed.theme_palette_open |> should.be_false
+}
+
+pub fn choosing_a_theme_closes_the_palette_test() {
+  let model = jira_view_ui.Model(..test_model(), theme_palette_open: True)
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.SetTheme(theme.Dark))
+  next.theme |> should.equal(theme.Dark)
+  next.theme_palette_open |> should.be_false
+}
+
+pub fn cycling_theme_keeps_the_palette_open_test() {
+  let model = jira_view_ui.Model(..test_model(), theme_palette_open: True)
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.CycleTheme)
+  next.theme |> should.equal(theme.Light)
+  next.theme_palette_open |> should.be_true
+}
+
+pub fn native_palette_close_updates_the_model_test() {
+  let model = jira_view_ui.Model(..test_model(), theme_palette_open: True)
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.ThemePaletteClosed)
+  next.theme_palette_open |> should.be_false
 }

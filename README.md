@@ -20,7 +20,8 @@ support, or stability promise.
   with basic formatting, work logs, labels, flag toggling, attachment previews,
   and an Open in Jira link. Flagged issues get a faint red row tint in the
   list.
-- Auto/light/dark color-scheme toggle; Auto follows the operating system.
+- Floating appearance palette (`Ctrl+K` / `⌘K`) with Auto/light/dark;
+  Auto follows the operating system.
 - Talks to Jira Cloud through a local proxy; credentials stay in `.env` and
   never reach the browser.
 - Local SQLite database for views and ordering. No telemetry.

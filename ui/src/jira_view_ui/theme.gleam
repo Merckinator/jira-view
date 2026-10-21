@@ -44,6 +44,14 @@ pub fn label(theme: Theme) -> String {
   }
 }
 
+pub fn description(theme: Theme) -> String {
+  case theme {
+    Auto -> "Follow your system"
+    Light -> "Always light"
+    Dark -> "Always dark"
+  }
+}
+
 fn to_string(theme: Theme) -> String {
   case theme {
     Auto -> "auto"
