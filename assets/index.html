@@ -39,6 +39,11 @@
         outline: 1px solid #8886; outline-offset: -1px;
         background: #8881;
       }
+      .jv-row-flagged { background: rgba(192, 57, 43, 0.07); }
+      .jv-row-flagged:hover { background: rgba(192, 57, 43, 0.12); }
+      .jv-row-flagged.jv-row-focused {
+        background: rgba(192, 57, 43, 0.10);
+      }
       /* drag handle column (⋮⋮) */
       .jv-table .jv-col-grab { width: 1.5rem; }
       .jv-grab {
@@ -56,9 +61,29 @@
       .jv-detail {
         border: 1px solid #8884; border-radius: 8px;
         padding: 0.75rem 1rem; margin-bottom: 1rem; position: relative;
+        overflow: hidden;
       }
-      .jv-detail-head { display: flex; justify-content: space-between; gap: 1rem; }
-      .jv-detail-head h2 { font-size: 1rem; margin: 0.25rem 0 0.5rem; }
+      .jv-detail-head {
+        display: flex; justify-content: space-between; gap: 1rem;
+        margin: -0.75rem -1rem 0;
+        padding: 0.75rem 1rem 1.5rem;
+        border-radius: 8px 8px 0 0;
+      }
+      .jv-detail-head-flagged {
+        background: linear-gradient(
+          to bottom,
+          rgba(192, 57, 43, 0.14) 0%,
+          rgba(192, 57, 43, 0.05) 55%,
+          transparent 100%
+        );
+      }
+      .jv-detail-head-text { min-width: 0; }
+      .jv-detail-head h2 { font-size: 1rem; margin: 0 0 0.25rem; }
+      .jv-detail-meta { margin: 0; }
+      .jv-detail-flag {
+        display: inline-flex; align-items: center; gap: 0.35rem;
+        margin: 0.4rem 0 0.5rem; font-size: 0.85rem; color: #888;
+      }
       .jv-detail-assignee {
         display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
         margin: 0.4rem 0 0.5rem; font-size: 0.85rem;
@@ -172,6 +197,21 @@
         border: 1px solid #8883; border-radius: 4px;
       }
       .jv-attachment a { color: #06c; }
+      @media (prefers-color-scheme: dark) {
+        .jv-row-flagged { background: rgba(255, 107, 94, 0.12); }
+        .jv-row-flagged:hover { background: rgba(255, 107, 94, 0.18); }
+        .jv-row-flagged.jv-row-focused {
+          background: rgba(255, 107, 94, 0.15);
+        }
+        .jv-detail-head-flagged {
+          background: linear-gradient(
+            to bottom,
+            rgba(255, 107, 94, 0.18) 0%,
+            rgba(255, 107, 94, 0.06) 55%,
+            transparent 100%
+          );
+        }
+      }
     </style>
   </head>
   <body>

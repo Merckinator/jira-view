@@ -40,7 +40,9 @@ Gleeunit discovers every `test/**/*_test.gleam` function whose name ends in `_te
 
 - Add routes in the `case path_segments` in `src/jira_view/web.gleam`.
 - Jira search uses the modern `/rest/api/3/search/jql`, not deprecated `/rest/api/3/search`; boards use `/rest/agile/1.0`. A view is capped at 2000 issues.
-- When adding an issue field, update `jira.search_fields`, `shared/types.gleam` and its decoders together.
+- The Flagged custom field id varies between Cloud sites. It is discovered by name via `/rest/api/3/field`, cached per base URL in `persistent_term`, and overridable with `JIRA_FLAGGED_FIELD`; the option value is overridable with `JIRA_FLAGGED_VALUE`. Do not hardcode a `customfield_…` id.
+- `/jira/issue/:key` is normalized to the app shape (issue + ADF content lists + pruned comments/worklog/attachments), so the UI never needs Jira custom-field ids.
+- When adding an issue field, update the `search_fields`/`issue_fields` functions, `shared/types.gleam` and its decoders together.
 - Per-view ordering is overlaid on Jira's order by `db.merge_view_order`; a save replaces the entire key list. The tests pin these semantics.
 - The UI deliberately avoids `lustre_http` (it conflicts with stdlib 1.x) and uses `ui/src/jira_view_ui/fetch_ffi.mjs`; don't reintroduce `lustre_http`.
 - `build.sh` hardcodes the esbuild input path `ui/build/dev/javascript/jira_view_ui/jira_view_ui.mjs`; update it if the UI package is renamed. It skips rebuilding when `assets/app.js` is newer than its inputs and falls back to the committed bundle when esbuild is absent. `assets/app.js` is tracked — rebuild and commit it with UI changes.

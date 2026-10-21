@@ -18,6 +18,7 @@ fn sample_issue(key: String) -> types.Issue {
     status: types.Status("To Do", "new"),
     assignee: None,
     labels: [],
+    flagged: False,
     updated: "2026-10-19",
   )
 }
@@ -492,6 +493,65 @@ pub fn assignee_error_is_reported_test() {
     jira_view_ui.update(
       test_model(),
       jira_view_ui.GotAssignee("B", Error("nope")),
+    )
+  next.write_error |> should.equal(Some("nope"))
+}
+
+// ————— flag —————
+
+fn loaded_flag_detail(key: String, flagged: Bool) -> jira_view_ui.Detail {
+  jira_view_ui.DetailLoaded(
+    types.IssueDetail(
+      issue: types.Issue(..sample_issue(key), flagged: flagged),
+      description: [],
+      comments: [],
+      worklog: [],
+      attachments: [],
+    ),
+  )
+}
+
+pub fn set_flag_updates_detail_and_row_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([sample_issue("B")]),
+      selected: Some(loaded_flag_detail("B", False)),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.SetFlagged(True))
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.flagged |> should.be_true
+
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.flagged |> should.be_true
+
+  next.write_error |> should.equal(None)
+}
+
+pub fn unflag_updates_detail_and_row_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([
+        types.Issue(..sample_issue("B"), flagged: True),
+      ]),
+      selected: Some(loaded_flag_detail("B", True)),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.SetFlagged(False))
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.flagged |> should.be_false
+
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.flagged |> should.be_false
+}
+
+pub fn flag_error_is_reported_test() {
+  let #(next, _) =
+    jira_view_ui.update(
+      test_model(),
+      jira_view_ui.GotFlagged("B", Error("nope")),
     )
   next.write_error |> should.equal(Some("nope"))
 }

@@ -5,6 +5,7 @@
 //// the Lustre frontend.
 
 import gleam/bit_array
+import gleam/dynamic/decode
 import gleam/http
 import gleam/http/request
 import gleam/httpc
@@ -13,6 +14,7 @@ import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
+import gleam/string
 import jira_view/config.{type Config}
 import shared/types
 
@@ -25,6 +27,31 @@ pub type JiraError {
   Decode(json.DecodeError)
   /// A single view returned more issues than the app will render.
   TooMany(limit: Int)
+  /// The site has no field named "Flagged" and no override was configured.
+  FlaggedFieldMissing
+}
+
+/// The site's Jira "Flagged" field, resolved by name or overridden through
+/// JIRA_FLAGGED_FIELD.
+pub type FlagField {
+  FlagField(id: String, kind: FlagKind)
+}
+
+pub type FlagKind {
+  /// An array of custom-field options (the normal Jira Cloud flag field).
+  OptionField
+  /// A plain boolean field.
+  BooleanField
+}
+
+/// The subset of GET /rest/api/3/field this app needs.
+pub type JiraField {
+  JiraField(
+    id: String,
+    name: String,
+    untranslated_name: String,
+    schema_type: String,
+  )
 }
 
 /// The endpoint that proves credentials.
@@ -34,8 +61,10 @@ pub const myself_path = "/rest/api/3/myself"
 pub const search_path = "/rest/api/3/search/jql"
 
 /// The `fields` allowlist sent with search requests; anything not on it is
-/// not fetched. Add a field here + to types.Issue/decoders together.
-pub const search_fields = "summary,status,assignee,updated,labels"
+/// not fetched. `flagged_field` is appended after discovery.
+pub fn search_fields(flagged_field: String) -> String {
+  "summary,status,assignee,updated,labels," <> flagged_field
+}
 
 /// Rows requested per page. Jira's default is 50; 100 halves the round trips
 /// without making a single response large.
@@ -52,12 +81,150 @@ pub fn issue_path(key: String) -> String {
 
 /// The fields the detail panel renders (description arrives as ADF; the
 /// comment, worklog and attachment embeds drive the panel's lists).
-pub const issue_fields =
-  "summary,description,status,assignee,updated,comment,worklog,attachment,labels"
+pub fn issue_fields(flagged_field: String) -> String {
+  "summary,description,status,assignee,updated,comment,worklog,attachment,labels,"
+  <> flagged_field
+}
+
+/// The site's flag field. JIRA_FLAGGED_FIELD wins; otherwise the field is
+/// discovered once per base URL and cached in persistent_term, so switching
+/// JIRA_BASE_URL to another instance resolves that site's own field.
+pub fn flag_field(cfg: Config) -> Result(FlagField, JiraError) {
+  case cfg.flagged_field {
+    Some(id) -> Ok(FlagField(id:, kind: OptionField))
+    None -> {
+      let cache_key = "jira_view:flagged_field:" <> cfg.base_url
+      let cached: option.Option(FlagField) = persistent_get(cache_key, None)
+      case cached {
+        Some(field) -> Ok(field)
+        None -> {
+          use body <- result.try(get(cfg, fields_path))
+          use fields <- result.try(
+            case json.parse(body, jira_fields_decoder()) {
+              Ok(fields) -> Ok(fields)
+              Error(error) -> Error(Decode(error))
+            },
+          )
+          use field <- result.try(case find_flagged_field(fields) {
+            Ok(field) -> Ok(field)
+            Error(_) -> Error(FlaggedFieldMissing)
+          })
+          let _ = persistent_put(cache_key, Some(field))
+          Ok(field)
+        }
+      }
+    }
+  }
+}
+
+/// The option value to write when flagging an option field. An explicit
+/// JIRA_FLAGGED_VALUE wins; otherwise the issue's edit metadata supplies the
+/// first allowed option. Boolean fields need no value.
+pub fn flag_value(
+  cfg: Config,
+  key: String,
+  field: FlagField,
+) -> Result(String, JiraError) {
+  case field.kind {
+    BooleanField -> Ok("")
+    OptionField ->
+      case cfg.flagged_value {
+        Some(value) -> Ok(value)
+        None -> {
+          use body <- result.try(get(cfg, editmeta_path(key)))
+          let value = case json.parse(body, flag_option_decoder(field.id)) {
+            Ok(Some(value)) -> value
+            Ok(None) -> "Impediment"
+            Error(_) -> "Impediment"
+          }
+          Ok(value)
+        }
+      }
+  }
+}
+
+pub fn jira_fields_decoder() -> decode.Decoder(List(JiraField)) {
+  decode.list(jira_field_decoder())
+}
+
+fn jira_field_decoder() -> decode.Decoder(JiraField) {
+  use id <- decode.field("id", decode.string)
+  use name <- decode.optional_field("name", "", decode.string)
+  use untranslated_name <- decode.optional_field(
+    "untranslatedName",
+    "",
+    decode.string,
+  )
+  use schema_type <- decode.then(decode.optionally_at(
+    ["schema", "type"],
+    "",
+    decode.string,
+  ))
+  decode.success(JiraField(id:, name:, untranslated_name:, schema_type:))
+}
+
+/// Find the native Flagged field by its invariant/English name.
+pub fn find_flagged_field(fields: List(JiraField)) -> Result(FlagField, Nil) {
+  use field <- result.try(
+    fields
+    |> list.find(fn(field) {
+      string.lowercase(field.untranslated_name) == "flagged"
+      || string.lowercase(field.name) == "flagged"
+    })
+    |> result.map_error(fn(_) { Nil }),
+  )
+  Ok(
+    FlagField(id: field.id, kind: case field.schema_type {
+      "boolean" -> BooleanField
+      _ -> OptionField
+    }),
+  )
+}
+
+/// The first non-empty option value of the field in an issue's edit metadata.
+/// Exposed for tests.
+pub fn flag_option_decoder(
+  field_id: String,
+) -> decode.Decoder(option.Option(String)) {
+  use options <- decode.then(decode.optionally_at(
+    ["fields", field_id, "allowedValues"],
+    [],
+    decode.list(flag_option_value_decoder()),
+  ))
+  let value = options |> list.find(fn(value) { value != "" })
+  decode.success(case value {
+    Ok(value) -> Some(value)
+    Error(_) -> None
+  })
+}
+
+fn flag_option_value_decoder() -> decode.Decoder(String) {
+  use value <- decode.optional_field("value", "", decode.string)
+  use id <- decode.optional_field("id", "", decode.string)
+  case value {
+    "" -> decode.success(id)
+    _ -> decode.success(value)
+  }
+}
+
+@external(erlang, "persistent_term", "get")
+fn persistent_get(key: String, default: a) -> a
+
+@external(erlang, "persistent_term", "put")
+fn persistent_put(key: String, value: a) -> Nil
 
 /// Paths of the transitions metadata + POST endpoints of an issue.
 pub fn transitions_path(key: String) -> String {
   issue_path(key) <> "/transitions"
+}
+
+/// All system and custom fields; used to discover the "Flagged" field id.
+pub const fields_path = "/rest/api/3/field"
+
+/// The edit metadata of an issue; supplies the allowed option value of the
+/// flag field when JIRA_FLAGGED_VALUE is not configured.
+pub fn editmeta_path(key: String) -> String {
+  issue_path(key) <> "/editmeta"
 }
 
 /// Path of the comment POST endpoint of an issue.
@@ -129,13 +296,15 @@ pub fn assignable_users(
 pub fn search(
   cfg: Config,
   jql: String,
+  flagged_field: String,
 ) -> Result(List(types.Issue), JiraError) {
-  search_pages(cfg, jql, None, [], 0)
+  search_pages(cfg, jql, flagged_field, None, [], 0)
 }
 
 fn search_pages(
   cfg: Config,
   jql: String,
+  flagged_field: String,
   token: option.Option(String),
   acc: List(List(types.Issue)),
   count: Int,
@@ -143,9 +312,9 @@ fn search_pages(
   use body <- result.try(get_with_query(
     cfg,
     search_path,
-    search_page_query(jql, token),
+    search_page_query(jql, token, flagged_field),
   ))
-  case json.parse(body, types.search_page_decoder()) {
+  case json.parse(body, types.search_page_decoder(flagged_field)) {
     Error(error) -> Error(Decode(error))
     Ok(types.SearchPage(issues, next)) -> {
       let count = count + list.length(issues)
@@ -154,7 +323,8 @@ fn search_pages(
         False -> {
           let acc = [issues, ..acc]
           case next {
-            Some(token) -> search_pages(cfg, jql, Some(token), acc, count)
+            Some(token) ->
+              search_pages(cfg, jql, flagged_field, Some(token), acc, count)
             None -> Ok(acc |> list.reverse |> list.flatten)
           }
         }
@@ -168,10 +338,11 @@ fn search_pages(
 pub fn search_page_query(
   jql: String,
   token: option.Option(String),
+  flagged_field: String,
 ) -> List(#(String, String)) {
   let base = [
     #("jql", jql),
-    #("fields", search_fields),
+    #("fields", search_fields(flagged_field)),
     #("maxResults", page_size),
   ]
   case token {
@@ -293,13 +464,15 @@ fn boards_pages(
 pub fn board_issues(
   cfg: Config,
   board_id: Int,
+  flagged_field: String,
 ) -> Result(List(types.Issue), JiraError) {
-  board_issues_pages(cfg, board_id, 0, [], 0)
+  board_issues_pages(cfg, board_id, flagged_field, 0, [], 0)
 }
 
 fn board_issues_pages(
   cfg: Config,
   board_id: Int,
+  flagged_field: String,
   start_at: Int,
   acc: List(List(types.Issue)),
   count: Int,
@@ -308,10 +481,10 @@ fn board_issues_pages(
     get_with_query(cfg, board_issues_path(board_id), [
       #("startAt", int.to_string(start_at)),
       #("maxResults", page_size),
-      #("fields", search_fields),
+      #("fields", search_fields(flagged_field)),
     ]),
   )
-  case json.parse(body, types.agile_page_decoder()) {
+  case json.parse(body, types.agile_page_decoder(flagged_field)) {
     Error(error) -> Error(Decode(error))
     Ok(#(issues, total)) -> {
       let count = count + list.length(issues)
@@ -324,6 +497,7 @@ fn board_issues_pages(
               board_issues_pages(
                 cfg,
                 board_id,
+                flagged_field,
                 start_at + list.length(issues),
                 acc,
                 count,

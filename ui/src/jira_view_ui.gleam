@@ -139,6 +139,8 @@ pub type Msg {
   GotAssignable(key: String, result: Result(List(types.User), String))
   SetAssignee(assignee: Option(types.User))
   GotAssignee(key: String, result: Result(Nil, String))
+  SetFlagged(flagged: Bool)
+  GotFlagged(key: String, result: Result(Nil, String))
   GotResolutions(Result(List(types.Resolution), String))
   SetResolution(String)
   TransitionClicked(transition: types.Transition)
@@ -553,6 +555,29 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       }
     GotAssignee(_, Ok(_)) -> #(model, effect.none())
     GotAssignee(key, Error(message)) ->
+      case is_selected(model, key) {
+        True -> #(
+          Model(..model, write_error: Some(message)),
+          // The optimistic change is rolled back by the fresh detail; its
+          // response also syncs the matching list row.
+          fetch_detail(key),
+        )
+        False -> #(model, effect.none())
+      }
+    SetFlagged(flagged) ->
+      case selected_key(model) {
+        Error(_) -> #(model, effect.none())
+        Ok(key) ->
+          case current_flagged(model) == flagged {
+            True -> #(model, effect.none())
+            False -> #(
+              Model(..with_flagged(model, key, flagged), write_error: None),
+              put_flagged(key, flagged),
+            )
+          }
+      }
+    GotFlagged(_, Ok(_)) -> #(model, effect.none())
+    GotFlagged(key, Error(message)) ->
       case is_selected(model, key) {
         True -> #(
           Model(..model, write_error: Some(message)),
@@ -1088,7 +1113,7 @@ fn fetch_detail(key: String) -> Effect(Msg) {
   fetch.get("/jira/issue/" <> key, fn(response) {
     case response {
       Ok(body) ->
-        case json.parse(body, types.issue_detail_decoder()) {
+        case json.parse(body, types.app_issue_detail_decoder()) {
           Ok(detail) -> GotDetail(key, Ok(detail))
           Error(error) -> GotDetail(key, Error(string.inspect(error)))
         }
@@ -1136,6 +1161,19 @@ fn put_assignee(key: String, assignee: Option(types.User)) -> Effect(Msg) {
       case result {
         Ok(_) -> GotAssignee(key, Ok(Nil))
         Error(message) -> GotAssignee(key, Error(message))
+      }
+    },
+  )
+}
+
+fn put_flagged(key: String, flagged: Bool) -> Effect(Msg) {
+  fetch.put_json(
+    "/jira/issue/" <> key <> "/flagged",
+    json.object([#("flagged", json.bool(flagged))]) |> json.to_string,
+    fn(result) {
+      case result {
+        Ok(_) -> GotFlagged(key, Ok(Nil))
+        Error(message) -> GotFlagged(key, Error(message))
       }
     },
   )
@@ -1444,6 +1482,52 @@ fn set_issue_assignee(
       Ready(
         map_issue(issues, key, fn(issue) {
           types.Issue(..issue, assignee: assignee)
+        }),
+      )
+    state -> state
+  }
+}
+
+// ————— flag editing —————
+
+fn current_flagged(model: Model) -> Bool {
+  case model.selected {
+    Some(DetailLoaded(info)) -> info.issue.flagged
+    _ -> False
+  }
+}
+
+/// Apply a flag change to both the open detail and its list row.
+fn with_flagged(model: Model, key: String, flagged: Bool) -> Model {
+  Model(
+    ..model,
+    state: set_issue_flagged(model.state, key, flagged),
+    selected: set_detail_flagged(model.selected, flagged),
+  )
+}
+
+fn set_detail_flagged(
+  selected: Option(Detail),
+  flagged: Bool,
+) -> Option(Detail) {
+  case selected {
+    Some(DetailLoaded(info)) ->
+      Some(DetailLoaded(
+        types.IssueDetail(
+          ..info,
+          issue: types.Issue(..info.issue, flagged: flagged),
+        ),
+      ))
+    selected -> selected
+  }
+}
+
+fn set_issue_flagged(state: State, key: String, flagged: Bool) -> State {
+  case state {
+    Ready(issues) ->
+      Ready(
+        map_issue(issues, key, fn(issue) {
+          types.Issue(..issue, flagged: flagged)
         }),
       )
     state -> state
@@ -1866,20 +1950,34 @@ fn row(
   cursor: Option(Int),
   columns: List(String),
 ) -> Element(Msg) {
+  let attributes = [
+    attribute.class(row_class(issue, index, cursor)),
+    event.on_click(Select(issue.key)),
+  ]
+  let attributes = case issue.flagged {
+    True -> list.append(attributes, [attribute.title("Flagged")])
+    False -> attributes
+  }
   keyed.element(
     "tr",
-    [
-      attribute.class(case cursor {
-        Some(focused) if focused == index -> "jv-row jv-row-focused"
-        _ -> "jv-row"
-      }),
-      event.on_click(Select(issue.key)),
-    ],
+    attributes,
     list.flatten([
       [#("grab", grab_cell())],
       list.map(columns, fn(column) { #(column, view_cell(issue, column)) }),
     ]),
   )
+}
+
+fn row_class(issue: Issue, index: Int, cursor: Option(Int)) -> String {
+  "jv-row"
+  <> case issue.flagged {
+    True -> " jv-row-flagged"
+    False -> ""
+  }
+  <> case cursor {
+    Some(focused) if focused == index -> " jv-row-focused"
+    _ -> ""
+  }
 }
 
 fn grab_cell() -> Element(Msg) {
@@ -2034,8 +2132,13 @@ fn find_assignee(
 
 fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
   html.aside([attribute.class("jv-detail")], [
-    html.div([attribute.class("jv-detail-head")], [
-      html.h2([], [text(detail_title(detail))]),
+    html.div([attribute.class(detail_head_class(detail))], [
+      html.div([attribute.class("jv-detail-head-text")], [
+        html.h2([], [text(detail_title(detail))]),
+        html.p([attribute.class("jv-detail-meta")], [
+          text(detail_meta(detail)),
+        ]),
+      ]),
       html.button([attribute.class("jv-close"), event.on_click(CloseDetail)], [
         text("✕"),
       ]),
@@ -2046,9 +2149,7 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
         html.p([attribute.class("jv-error")], [text("Error: " <> message)])
       DetailLoaded(info) ->
         html.div([attribute.class("jv-detail-body")], [
-          html.p([attribute.class("jv-detail-meta")], [
-            text(info.issue.key <> " · " <> info.issue.status.name),
-          ]),
+          flag_section(info.issue),
           assignee_section(model, info.issue),
           case model.write_error {
             Some(message) ->
@@ -2071,6 +2172,36 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
           ),
         ])
     },
+  ])
+}
+
+fn detail_head_class(detail: Detail) -> String {
+  case detail {
+    DetailLoaded(info) if info.issue.flagged ->
+      "jv-detail-head jv-detail-head-flagged"
+    _ -> "jv-detail-head"
+  }
+}
+
+fn detail_meta(detail: Detail) -> String {
+  case detail {
+    DetailLoaded(info) -> info.issue.key <> " · " <> info.issue.status.name
+    DetailLoading(_) -> ""
+    DetailFailed(_) -> ""
+  }
+}
+
+/// The open issue's flag state, with the control that toggles it.
+fn flag_section(issue: Issue) -> Element(Msg) {
+  html.label([attribute.class("jv-detail-flag")], [
+    html.input([
+      attribute.type_("checkbox"),
+      attribute.class("jv-flag-toggle"),
+      attribute.title("Flag or unflag this issue"),
+      attribute.checked(issue.flagged),
+      event.on_check(SetFlagged),
+    ]),
+    text("Flagged"),
   ])
 }
 

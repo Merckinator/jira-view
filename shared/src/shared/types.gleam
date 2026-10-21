@@ -44,6 +44,8 @@ pub type Issue {
     assignee: Option(User),
     /// Jira labels (fields.labels); empty when the issue has none.
     labels: List(String),
+    /// Whether Jira's native "Flagged" field is non-empty.
+    flagged: Bool,
     /// ISO timestamp string as reported by Jira.
     updated: String,
   )
@@ -193,7 +195,8 @@ pub fn status_decoder() -> decode.Decoder(Status) {
 /// Decoder for one issue of a search response. Unexpected extra fields are
 /// ignored by the decoder itself; missing *required* fields are a decode
 /// error, so payload drift surfaces loudly (see plan section 6).
-pub fn issue_decoder() -> decode.Decoder(Issue) {
+/// `flagged_field` is the site-specific custom field id of "Flagged".
+pub fn issue_decoder(flagged_field: String) -> decode.Decoder(Issue) {
   use key <- decode.field("key", decode.string)
   use id <- decode.field("id", decode.string)
   use summary <- decode.subfield(["fields", "summary"], decode.string)
@@ -208,6 +211,7 @@ pub fn issue_decoder() -> decode.Decoder(Issue) {
     [],
     decode.list(decode.string),
   ))
+  use flagged <- decode.then(flagged_decoder(flagged_field))
   use updated <- decode.subfield(["fields", "updated"], decode.string)
   decode.success(Issue(
     key:,
@@ -216,13 +220,40 @@ pub fn issue_decoder() -> decode.Decoder(Issue) {
     status:,
     assignee:,
     labels:,
+    flagged:,
     updated:,
   ))
 }
 
+/// The Flagged field is an option array on most Cloud sites (null/absent when
+/// unflagged, non-empty when flagged) and a plain boolean on some.
+fn flagged_decoder(flagged_field: String) -> decode.Decoder(Bool) {
+  decode.optionally_at(
+    ["fields", flagged_field],
+    False,
+    decode.optional(
+      decode.one_of(decode.bool, or: [
+        decode.list(decode.success(Nil))
+        |> decode.map(fn(options) { options != [] }),
+      ]),
+    )
+      |> decode.map(fn(value) {
+        case value {
+          Some(flag) -> flag
+          None -> False
+        }
+      }),
+  )
+}
+
 /// Decoder for one page of GET /rest/api/3/search/jql.
-pub fn search_page_decoder() -> decode.Decoder(SearchPage) {
-  use issues <- decode.field("issues", decode.list(issue_decoder()))
+pub fn search_page_decoder(
+  flagged_field: String,
+) -> decode.Decoder(SearchPage) {
+  use issues <- decode.field(
+    "issues",
+    decode.list(issue_decoder(flagged_field)),
+  )
   use next_page_token <- decode.optional_field(
     "nextPageToken",
     None,
@@ -276,6 +307,7 @@ fn app_issue_decoder() -> decode.Decoder(Issue) {
     decode.optional(app_user_decoder()),
   )
   use labels <- decode.optional_field("labels", [], decode.list(decode.string))
+  use flagged <- decode.optional_field("flagged", False, decode.bool)
   use updated <- decode.field("updated", decode.string)
   decode.success(Issue(
     key:,
@@ -284,13 +316,16 @@ fn app_issue_decoder() -> decode.Decoder(Issue) {
     status:,
     assignee:,
     labels:,
+    flagged:,
     updated:,
   ))
 }
 
 /// Decoder for GET /rest/api/3/issue/{key} with
 /// fields=summary,description,status,assignee,updated.
-pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
+pub fn issue_detail_decoder(
+  flagged_field: String,
+) -> decode.Decoder(IssueDetail) {
   use key <- decode.field("key", decode.string)
   use id <- decode.field("id", decode.string)
   use summary <- decode.subfield(["fields", "summary"], decode.string)
@@ -305,6 +340,7 @@ pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
     [],
     decode.list(decode.string),
   ))
+  use flagged <- decode.then(flagged_decoder(flagged_field))
   use updated <- decode.subfield(["fields", "updated"], decode.string)
   use doc <- decode.then(decode.optionally_at(
     ["fields", "description"],
@@ -331,7 +367,49 @@ pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
     decode.list(attachment_decoder()),
   ))
   decode.success(IssueDetail(
-    issue: Issue(key:, id:, summary:, status:, assignee:, labels:, updated:),
+    issue: Issue(
+      key:,
+      id:,
+      summary:,
+      status:,
+      assignee:,
+      labels:,
+      flagged:,
+      updated:,
+    ),
+    description:,
+    comments:,
+    worklog:,
+    attachments:,
+  ))
+}
+
+/// Decoder for the app-shaped detail response: flat issue fields, ADF
+/// content lists, and pruned comments/worklog/attachments.
+pub fn app_issue_detail_decoder() -> decode.Decoder(IssueDetail) {
+  use issue <- decode.field("issue", app_issue_decoder())
+  use description <- decode.optional_field(
+    "description",
+    [],
+    adf_content_decoder(),
+  )
+  use comments <- decode.optional_field(
+    "comments",
+    [],
+    decode.list(app_comment_decoder()),
+  )
+  use worklog <- decode.optional_field(
+    "worklog",
+    [],
+    decode.list(app_worklog_decoder()),
+  )
+  use attachments <- decode.optional_field(
+    "attachments",
+    [],
+    decode.list(app_attachment_decoder()),
+  )
+  decode.success(IssueDetail(
+    issue:,
     description:,
     comments:,
     worklog:,
@@ -342,8 +420,13 @@ pub fn issue_detail_decoder() -> decode.Decoder(IssueDetail) {
 /// One page of an agile list response ({issues: […], startAt, maxResults,
 /// total}): the issues plus `total` for the pagination loop. Issue shape
 /// inside is identical to the platform search.
-pub fn agile_page_decoder() -> decode.Decoder(#(List(Issue), Int)) {
-  use issues <- decode.field("issues", decode.list(issue_decoder()))
+pub fn agile_page_decoder(
+  flagged_field: String,
+) -> decode.Decoder(#(List(Issue), Int)) {
+  use issues <- decode.field(
+    "issues",
+    decode.list(issue_decoder(flagged_field)),
+  )
   use total <- decode.then(decode.optionally_at(["total"], 0, decode.int))
   decode.success(#(issues, total))
 }
@@ -492,6 +575,18 @@ pub fn app_worklog_decoder() -> decode.Decoder(WorklogEntry) {
   decode.success(WorklogEntry(author:, started:, time_spent:, body:))
 }
 
+fn app_attachment_decoder() -> decode.Decoder(Attachment) {
+  use id <- decode.field("id", decode.string)
+  use filename <- decode.field("filename", decode.string)
+  use mime_type <- decode.optional_field(
+    "mime_type",
+    "application/octet-stream",
+    decode.string,
+  )
+  use size <- decode.optional_field("size", 0, decode.int)
+  decode.success(Attachment(id:, filename:, mime_type:, size:))
+}
+
 fn adf_content_decoder() -> decode.Decoder(List(AdfNode)) {
   decode.list(adf.adf_decoder())
 }
@@ -532,7 +627,29 @@ pub fn issue_to_json(issue: Issue) -> Json {
     #("status", status_to_json(issue.status)),
     #("assignee", json.nullable(issue.assignee, of: user_to_json)),
     #("labels", json.array(issue.labels, json.string)),
+    #("flagged", json.bool(issue.flagged)),
     #("updated", json.string(issue.updated)),
+  ])
+}
+
+/// Encode a detail in the app shape the UI decodes (see
+/// app_issue_detail_decoder): the issue plus flat ADF content lists.
+pub fn issue_detail_to_json(detail: IssueDetail) -> Json {
+  json.object([
+    #("issue", issue_to_json(detail.issue)),
+    #("description", json.array(detail.description, adf.adf_to_json)),
+    #("comments", json.array(detail.comments, comment_to_json)),
+    #("worklog", json.array(detail.worklog, worklog_to_json)),
+    #("attachments", json.array(detail.attachments, attachment_to_json)),
+  ])
+}
+
+pub fn attachment_to_json(attachment: Attachment) -> Json {
+  json.object([
+    #("id", json.string(attachment.id)),
+    #("filename", json.string(attachment.filename)),
+    #("mime_type", json.string(attachment.mime_type)),
+    #("size", json.int(attachment.size)),
   ])
 }
 

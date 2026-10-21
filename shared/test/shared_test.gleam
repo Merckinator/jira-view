@@ -1,6 +1,6 @@
 import gleam/json.{parse}
 import gleam/list
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
 import shared/adf
@@ -9,6 +9,9 @@ import shared/types
 pub fn main() {
   gleeunit.main()
 }
+
+// the site-specific custom field id of Jira's "Flagged" field
+const flag_field = "customfield_10021"
 
 // decoding against the shape of a captured Jira /rest/api/3/myself response
 
@@ -105,6 +108,9 @@ const sample_search_page =
       \"fields\": {
         \"summary\": \"Create a demo project\",
         \"labels\": [\"demo\", \"docs\"],
+        \"customfield_10021\": [
+          {\"id\": \"10019\", \"value\": \"Impediment\"}
+        ],
         \"assignee\": {
           \"accountId\": \"557058:f1a2b3c4-5678\",
           \"displayName\": \"Jeff Merckens\",
@@ -122,7 +128,8 @@ const sample_search_page =
 "
 
 pub fn decode_search_page_test() {
-  let assert Ok(page) = parse(sample_search_page, types.search_page_decoder())
+  let assert Ok(page) =
+    parse(sample_search_page, types.search_page_decoder(flag_field))
   page.issues |> list.length |> should.equal(2)
   page.next_page_token |> should.equal(Some("EAMYscSMiZU0IiNjcmVhdGVkPj0tMzBk"))
 
@@ -132,11 +139,13 @@ pub fn decode_search_page_test() {
   first.summary |> should.equal("Subtask 2.1")
   first.assignee |> should.be_none
   first.labels |> should.equal([])
+  first.flagged |> should.be_false
   first.status |> should.equal(types.Status("To Do", "new"))
   first.updated |> should.equal("2026-10-18T18:05:33.688-0400")
 
   second.assignee |> should.be_some
   second.labels |> should.equal(["demo", "docs"])
+  second.flagged |> should.be_true
   let assert Some(assignee) = second.assignee
   assignee.display_name |> should.equal("Jeff Merckens")
   assignee.account_id |> should.equal("557058:f1a2b3c4-5678")
@@ -144,11 +153,39 @@ pub fn decode_search_page_test() {
   second.status |> should.equal(types.Status("In Progress", "indeterminate"))
 }
 
+// sites whose Flagged field is a plain boolean still decode as flagged
+
+pub fn decode_boolean_flagged_test() {
+  let assert Ok(page) =
+    parse(
+      "{
+        \"issues\": [
+          {
+            \"id\": \"1\",
+            \"key\": \"KAN-10\",
+            \"fields\": {
+              \"summary\": \"s\",
+              \"customfield_10021\": true,
+              \"updated\": \"2026-10-17T10:00:00.000-0400\",
+              \"status\": {\"name\": \"To Do\"}
+            }
+          }
+        ]
+      }",
+      types.search_page_decoder(flag_field),
+    )
+  let assert [issue] = page.issues
+  issue.flagged |> should.be_true
+}
+
 // last page of a real capture: "isLast": true and no nextPageToken at all
 
 pub fn decode_search_last_page_test() {
   let assert Ok(page) =
-    parse("{\"issues\": [], \"isLast\": true}", types.search_page_decoder())
+    parse(
+      "{\"issues\": [], \"isLast\": true}",
+      types.search_page_decoder(flag_field),
+    )
   page.issues |> should.equal([])
   page.next_page_token |> should.be_none
 }
@@ -174,7 +211,7 @@ pub fn decode_search_page_missing_optional_bits_test() {
           }
         ]
       }",
-      types.search_page_decoder(),
+      types.search_page_decoder(flag_field),
     )
   let assert [only] = page.issues
   only.status.category |> should.equal("")
@@ -193,7 +230,7 @@ pub fn decode_search_page_missing_summary_is_error_test() {
           {\"id\": \"1\", \"key\": \"KAN-9\", \"fields\": {}}
         ]
       }",
-      types.search_page_decoder(),
+      types.search_page_decoder(flag_field),
     )
   parsed |> should.be_error
 }
@@ -218,7 +255,7 @@ pub fn decode_issue_detail_test() {
           \"description\": {\"type\": \"doc\", \"version\": 1, \"content\": []}
         }
       }",
-      types.issue_detail_decoder(),
+      types.issue_detail_decoder(flag_field),
     )
 
   detail.issue.key |> should.equal("KAN-2")
@@ -238,7 +275,7 @@ pub fn decode_issue_detail_without_description_test() {
           \"status\": {\"name\": \"To Do\"}
         }
       }",
-      types.issue_detail_decoder(),
+      types.issue_detail_decoder(flag_field),
     )
   detail.description |> should.equal([])
 }
@@ -336,6 +373,7 @@ pub fn issue_json_round_trip_test() {
         "https://x/48.png",
       )),
       labels: ["docs", "urgent"],
+      flagged: True,
       updated: "2026-10-18T18:05:18.418-0400",
     )
   let response =
@@ -343,4 +381,34 @@ pub fn issue_json_round_trip_test() {
     |> json.to_string
   let assert Ok([decoded]) = parse(response, types.issues_response_decoder())
   decoded |> should.equal(issue)
+}
+
+// the normalized detail endpoint's shape survives the round trip the backend
+// and UI share (flat issue fields, ADF content lists)
+
+pub fn issue_detail_json_round_trip_test() {
+  let paragraph =
+    adf.AdfNode("paragraph", "", [adf.AdfNode("text", "hello", [], [])], [])
+  let detail =
+    types.IssueDetail(
+      issue: types.Issue(
+        key: "SAM1-11",
+        id: "10013",
+        summary: "Phase 4 verification",
+        status: types.Status("Done", "done"),
+        assignee: None,
+        labels: ["phase-4"],
+        flagged: True,
+        updated: "2026-10-18",
+      ),
+      description: [paragraph],
+      comments: [types.Comment("Jeff", "2026-10-18", [paragraph])],
+      worklog: [types.WorklogEntry("Jeff", "2026-10-18", "25m", [])],
+      attachments: [
+        types.Attachment("10001", "screenshot.png", "image/png", 2048),
+      ],
+    )
+  let response = types.issue_detail_to_json(detail) |> json.to_string
+  parse(response, types.app_issue_detail_decoder())
+  |> should.equal(Ok(detail))
 }

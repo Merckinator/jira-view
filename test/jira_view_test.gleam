@@ -19,6 +19,8 @@ pub fn main() {
   gleeunit.main()
 }
 
+const flagged_field = "customfield_10021"
+
 /// Wisp's simulated requests default to `wisp.example.com`; the handler now
 /// accepts only local hosts, so every test request goes through this helper.
 fn local_request(method: http.Method, path: String) -> wisp.Request {
@@ -120,6 +122,8 @@ pub fn basic_auth_header_test() {
       email: "jeff@example.com",
       api_token: "&c|>bE{)Z7!wV$2b",
       base_url: "https://acme.atlassian.net",
+      flagged_field: None,
+      flagged_value: None,
     )
   jira.basic_auth_header(cfg)
   |> should.equal("Basic amVmZkBleGFtcGxlLmNvbTomY3w+YkV7KVo3IXdWJDJi")
@@ -128,20 +132,118 @@ pub fn basic_auth_header_test() {
 // search request shape: jql bounded, fields pruned, token appended when present
 
 pub fn search_page_query_test() {
-  jira.search_page_query("assignee = currentUser()", None)
+  jira.search_page_query("assignee = currentUser()", None, flagged_field)
   |> should.equal([
     #("jql", "assignee = currentUser()"),
-    #("fields", jira.search_fields),
+    #("fields", jira.search_fields(flagged_field)),
     #("maxResults", "100"),
   ])
 
-  jira.search_page_query("created >= -30d ORDER BY updated DESC", Some("tok"))
+  jira.search_page_query(
+    "created >= -30d ORDER BY updated DESC",
+    Some("tok"),
+    flagged_field,
+  )
   |> should.equal([
     #("jql", "created >= -30d ORDER BY updated DESC"),
-    #("fields", jira.search_fields),
+    #("fields", jira.search_fields(flagged_field)),
     #("maxResults", "100"),
     #("nextPageToken", "tok"),
   ])
+}
+
+// the Flagged field is discovered per site; the id is not stable across
+// Jira Cloud instances, so these tests pin the name-based lookup.
+
+pub fn find_flagged_field_test() {
+  let assert Ok(fields) =
+    json.parse(
+      "[{\"id\":\"customfield_10300\",\"name\":\"Flagged\",\"untranslatedName\":\"Flagged\",\"schema\":{\"type\":\"array\"}}]",
+      jira.jira_fields_decoder(),
+    )
+  jira.find_flagged_field(fields)
+  |> should.equal(Ok(jira.FlagField("customfield_10300", jira.OptionField)))
+}
+
+pub fn find_flagged_boolean_field_test() {
+  let assert Ok(fields) =
+    json.parse(
+      "[{\"id\":\"customfield_10300\",\"name\":\"Flagged\",\"untranslatedName\":\"Flagged\",\"schema\":{\"type\":\"boolean\"}}]",
+      jira.jira_fields_decoder(),
+    )
+  jira.find_flagged_field(fields)
+  |> should.equal(Ok(jira.FlagField("customfield_10300", jira.BooleanField)))
+}
+
+pub fn find_flagged_field_missing_test() {
+  let assert Ok(fields) =
+    json.parse(
+      "[{\"id\":\"summary\",\"name\":\"Summary\",\"schema\":{\"type\":\"string\"}}]",
+      jira.jira_fields_decoder(),
+    )
+  jira.find_flagged_field(fields)
+  |> should.be_error
+}
+
+pub fn editmeta_flag_option_decoder_test() {
+  json.parse(
+    "{\"fields\":{\"customfield_10300\":{\"allowedValues\":[{\"id\":\"10019\",\"value\":\"Impediment\"}]}}}",
+    jira.flag_option_decoder("customfield_10300"),
+  )
+  |> should.equal(Ok(Some("Impediment")))
+
+  json.parse(
+    "{\"fields\":{\"customfield_10300\":{\"allowedValues\":[{\"id\":\"10019\"}]}}}",
+    jira.flag_option_decoder("customfield_10300"),
+  )
+  |> should.equal(Ok(Some("10019")))
+
+  json.parse(
+    "{\"fields\":{\"customfield_10300\":{}}}",
+    jira.flag_option_decoder("customfield_10300"),
+  )
+  |> should.equal(Ok(None))
+}
+
+pub fn config_flagged_overrides_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://acme.atlassian.net")
+  envoy.set("JIRA_FLAGGED_FIELD", "customfield_10300")
+  envoy.set("JIRA_FLAGGED_VALUE", "Flagged")
+
+  let assert Ok(cfg) = config.load()
+  cfg.flagged_field |> should.equal(Some("customfield_10300"))
+  cfg.flagged_value |> should.equal(Some("Flagged"))
+  jira.flag_field(cfg)
+  |> should.equal(Ok(jira.FlagField("customfield_10300", jira.OptionField)))
+
+  envoy.unset("JIRA_FLAGGED_FIELD")
+  envoy.unset("JIRA_FLAGGED_VALUE")
+}
+
+pub fn flag_value_uses_override_test() {
+  let cfg =
+    config.Config(
+      email: "jeff@example.com",
+      api_token: "test-token",
+      base_url: "https://acme.atlassian.net",
+      flagged_field: None,
+      flagged_value: Some("Flagged"),
+    )
+  jira.flag_value(
+    cfg,
+    "KAN-1",
+    jira.FlagField("customfield_10021", jira.OptionField),
+  )
+  |> should.equal(Ok("Flagged"))
+
+  jira.flag_value(
+    cfg,
+    "KAN-1",
+    jira.FlagField("customfield_10021", jira.BooleanField),
+  )
+  |> should.equal(Ok(""))
 }
 
 // test issues for the private-ordering merge
@@ -161,6 +263,7 @@ fn sample_issue(
       name -> Some(types.User("557058:f1a2b3c4", name, "https://x/48.png"))
     },
     labels: [],
+    flagged: False,
     updated: "2026-10-18T18:05:33.688-0400",
   )
 }
@@ -426,8 +529,8 @@ pub fn issue_detail_decoder_with_embeds_test() {
   // fields.comment / fields.worklog embeds decode through the same
   // entry decoders (verified against a live capture with one of each).
   json.parse(
-    "{\"id\":\"10013\",\"key\":\"SAM1-11\",\"fields\":{\"summary\":\"Phase 4 verification\",\"labels\":[\"phase-4\"],\"status\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"updated\":\"2026-10-18\",\"description\":null,\"comment\":{\"comments\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"created\":\"2026-10-18T19:38:02.298-0400\",\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"c1\"}]}]}}],\"total\":1},\"worklog\":{\"worklogs\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\"}],\"total\":1}}}",
-    types.issue_detail_decoder(),
+    "{\"id\":\"10013\",\"key\":\"SAM1-11\",\"fields\":{\"summary\":\"Phase 4 verification\",\"labels\":[\"phase-4\"],\"customfield_10021\":[{\"id\":\"10019\",\"value\":\"Impediment\"}],\"status\":{\"name\":\"Done\",\"statusCategory\":{\"key\":\"done\"}},\"updated\":\"2026-10-18\",\"description\":null,\"comment\":{\"comments\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"created\":\"2026-10-18T19:38:02.298-0400\",\"body\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"c1\"}]}]}}],\"total\":1},\"worklog\":{\"worklogs\":[{\"author\":{\"displayName\":\"Jeffery Merckens\"},\"started\":\"2026-10-18T23:38:02.298+0000\",\"timeSpent\":\"25m\"}],\"total\":1}}}",
+    types.issue_detail_decoder(flagged_field),
   )
   |> should.equal(
     Ok(
@@ -439,6 +542,7 @@ pub fn issue_detail_decoder_with_embeds_test() {
           status: types.Status("Done", "done"),
           assignee: None,
           labels: ["phase-4"],
+          flagged: True,
           updated: "2026-10-18",
         ),
         description: [],
@@ -621,6 +725,75 @@ pub fn labels_route_unreachable_test() {
       json.object([#("labels", json.array(["docs"], json.string))]),
     )
   web.handle_request(request).status |> should.equal(502)
+}
+
+// flagged: request parsing, both field shapes, and the proxy route
+
+pub fn parse_flagged_body_test() {
+  web.parse_flagged_body("{\"flagged\": true}")
+  |> should.equal(Ok(True))
+
+  web.parse_flagged_body("{\"flagged\": false}")
+  |> should.equal(Ok(False))
+
+  web.parse_flagged_body("{\"flagged\": \"yes\"}")
+  |> should.be_error
+
+  web.parse_flagged_body("{}")
+  |> should.be_error
+}
+
+pub fn flagged_update_body_test() {
+  web.flagged_update_body(
+    jira.FlagField("customfield_10300", jira.OptionField),
+    "Impediment",
+    True,
+  )
+  |> should.equal(
+    "{\"fields\":{\"customfield_10300\":[{\"value\":\"Impediment\"}]}}",
+  )
+
+  web.flagged_update_body(
+    jira.FlagField("customfield_10300", jira.OptionField),
+    "Impediment",
+    False,
+  )
+  |> should.equal("{\"fields\":{\"customfield_10300\":[]}}")
+
+  web.flagged_update_body(
+    jira.FlagField("customfield_10300", jira.BooleanField),
+    "",
+    True,
+  )
+  |> should.equal("{\"fields\":{\"customfield_10300\":true}}")
+
+  web.flagged_update_body(
+    jira.FlagField("customfield_10300", jira.BooleanField),
+    "",
+    False,
+  )
+  |> should.equal("{\"fields\":{\"customfield_10300\":false}}")
+}
+
+pub fn flagged_route_bad_body_test() {
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/flagged")
+    |> simulate.json_body(json.object([#("flagged", json.string("yes"))]))
+  web.handle_request(request).status |> should.equal(400)
+}
+
+pub fn flagged_route_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  envoy.set("JIRA_FLAGGED_FIELD", "customfield_10021")
+  envoy.set("JIRA_FLAGGED_VALUE", "Impediment")
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/flagged")
+    |> simulate.json_body(json.object([#("flagged", json.bool(True))]))
+  web.handle_request(request).status |> should.equal(502)
+  envoy.unset("JIRA_FLAGGED_FIELD")
+  envoy.unset("JIRA_FLAGGED_VALUE")
 }
 
 // assignee: request parsing, the Jira assign body, and the candidate proxy
@@ -850,7 +1023,7 @@ pub fn boards_page_decoder_test() {
 pub fn agile_page_decoder_test() {
   json.parse(
     "{\"startAt\":0,\"maxResults\":100,\"total\":1,\"issues\":[{\"id\":\"10011\",\"key\":\"KAN-2\",\"fields\":{\"summary\":\"Task 2\",\"status\":{\"name\":\"In Progress\",\"statusCategory\":{\"key\":\"indeterminate\"}},\"updated\":\"2026-10-18\"}}]}",
-    types.agile_page_decoder(),
+    types.agile_page_decoder(flagged_field),
   )
   |> should.equal(
     Ok(#(
@@ -862,6 +1035,7 @@ pub fn agile_page_decoder_test() {
           status: types.Status("In Progress", "indeterminate"),
           assignee: None,
           labels: [],
+          flagged: False,
           updated: "2026-10-18",
         ),
       ],

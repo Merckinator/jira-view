@@ -2,6 +2,7 @@
 //// (see `.env.example` and `dev.sh`).
 
 import envoy
+import gleam/option.{type Option, None, Some}
 import gleam/string
 
 pub type Config {
@@ -13,10 +14,17 @@ pub type Config {
     api_token: String,
     /// Site root without trailing slash, e.g. "https://acme.atlassian.net".
     base_url: String,
+    /// Optional override for the custom field id of Jira's "Flagged" field.
+    /// Without it the id is discovered from GET /rest/api/3/field.
+    flagged_field: Option(String),
+    /// Optional override for the option value written when flagging. Without
+    /// it the issue's edit metadata supplies the first allowed option.
+    flagged_value: Option(String),
   )
 }
 
 /// Read configuration from `JIRA_EMAIL`, `JIRA_API_TOKEN` and `JIRA_BASE_URL`.
+/// `JIRA_FLAGGED_FIELD` and `JIRA_FLAGGED_VALUE` are optional overrides.
 pub fn load() -> Result(Config, String) {
   case
     envoy.get("JIRA_EMAIL"),
@@ -30,6 +38,8 @@ pub fn load() -> Result(Config, String) {
             email: string.trim(email),
             api_token: string.trim(api_token),
             base_url: normalize_base_url(base_url),
+            flagged_field: optional_env("JIRA_FLAGGED_FIELD"),
+            flagged_value: optional_env("JIRA_FLAGGED_VALUE"),
           ))
         Error(message) -> Error(message)
       }
@@ -61,5 +71,17 @@ pub fn normalize_base_url(base_url: String) -> String {
   case string.ends_with(base_url, "/") {
     True -> normalize_base_url(string.drop_end(base_url, 1))
     False -> base_url
+  }
+}
+
+/// An optional environment value; absent and blank values both mean "unset".
+fn optional_env(name: String) -> Option(String) {
+  case envoy.get(name) {
+    Ok(value) ->
+      case string.trim(value) {
+        "" -> None
+        value -> Some(value)
+      }
+    Error(_) -> None
   }
 }

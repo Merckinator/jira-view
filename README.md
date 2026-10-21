@@ -17,7 +17,8 @@ support, or stability promise.
 - Drag-and-drop row ordering (or keyboard shortcuts) layered over Jira's sort;
   new issues append at the end.
 - Inline issue detail with transitions, assignee, comments, work logs, labels,
-  and attachment previews.
+  flag toggling, and attachment previews. Flagged issues get a faint red row
+  tint in the list.
 - Talks to Jira Cloud through a local proxy; credentials stay in `.env` and
   never reach the browser.
 - Local SQLite database for views and ordering. No telemetry.
@@ -68,6 +69,8 @@ Configuration is read from the environment on each request:
 | `JIRA_BASE_URL` | yes | Must be `https://`, without a trailing slash. |
 | `JIRA_VIEW_PORT` | no | Defaults to `8787`. |
 | `JIRA_VIEW_DB` | no | Defaults to `jira-view.db` in the current directory. |
+| `JIRA_FLAGGED_FIELD` | no | Id of the custom field that implements Flagged. Discovered by name by default. |
+| `JIRA_FLAGGED_VALUE` | no | Option value written when flagging. Defaults to the field's first allowed option (usually `Impediment`). |
 
 `.env`, the SQLite database, and test artifacts are gitignored.
 
@@ -84,10 +87,15 @@ Configuration is read from the environment on each request:
   + Refresh run the edited query without saving it; saving is explicit.
 - In the detail panel: transition buttons (required `resolution` fields get a
   picker, others are refused with Jira's field list), an assignee picker over
-  Jira's assignable users (including unassign), a comment box, a work-log
-  form, and label chips with add/remove controls — all optimistic, undone by
-  a refetch on failure. Attachments render inline (or download) through the
-  local proxy. List rows show labels under the summary.
+  Jira's assignable users (including unassign), a Flagged checkbox, a comment
+  box, a work-log form, and label chips with add/remove controls — all
+  optimistic, undone by a refetch on failure. Attachments render inline (or
+  download) through the local proxy. List rows show labels under the summary;
+  flagged rows also get a faint red tint.
+- The native Flagged field is discovered per site by its name. If your site
+  uses a renamed field or the write fails with “not on the appropriate
+  screen”, set `JIRA_FLAGGED_FIELD` and/or add Flagged to the issue Edit
+  screen.
 - A view is capped at 2000 issues.
 
 ## Security & limitations

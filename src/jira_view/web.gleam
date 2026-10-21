@@ -69,6 +69,10 @@ fn handle_local_request(request: wisp.Request) -> wisp.Response {
       wisp.require_method(request, http.Put, fn() {
         update_labels(request, key)
       })
+    ["jira", "issue", key, "flagged"] ->
+      wisp.require_method(request, http.Put, fn() {
+        update_flagged(request, key)
+      })
     ["jira", "issue", key, "assignable"] ->
       wisp.require_method(request, http.Get, fn() { assignable_users(key) })
     ["jira", "issue", key, "assignee"] ->
@@ -143,16 +147,20 @@ fn search(request: wisp.Request) -> wisp.Response {
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
-          case jira.search(cfg, jql) {
-            Ok(issues) -> {
-              let ordered = merge_with_saved_order(issues, view_id)
-              json.object([
-                #("issues", json.array(ordered, types.issue_to_json)),
-              ])
-              |> json.to_string
-              |> wisp.json_response(200)
-            }
+          case jira.flag_field(cfg) {
             Error(error) -> jira_error_response(error)
+            Ok(field) ->
+              case jira.search(cfg, jql, field.id) {
+                Ok(issues) -> {
+                  let ordered = merge_with_saved_order(issues, view_id)
+                  json.object([
+                    #("issues", json.array(ordered, types.issue_to_json)),
+                  ])
+                  |> json.to_string
+                  |> wisp.json_response(200)
+                }
+                Error(error) -> jira_error_response(error)
+              }
           }
       }
     }
@@ -574,6 +582,86 @@ pub fn labels_update_body(labels: List(String)) -> String {
   |> json.to_string
 }
 
+/// PUT /jira/issue/:key/flagged — body {"flagged": true|false}. The field id
+/// is discovered per site; option fields get the resolved allowed value and
+/// boolean fields get a plain boolean.
+fn update_flagged(request: wisp.Request, key: String) -> wisp.Response {
+  use <- wisp.require_content_type(request, "application/json")
+  use body <- wisp.require_string_body(request)
+  case parse_flagged_body(body) {
+    Error(message) -> json_error("bad_request", message, 400)
+    Ok(flagged) ->
+      case config.load() {
+        Error(message) -> json_error("configuration_incomplete", message, 503)
+        Ok(cfg) ->
+          case jira.flag_field(cfg) {
+            Error(error) -> jira_error_response(error)
+            Ok(field) ->
+              case flagged {
+                False -> put_flagged(cfg, key, field, "", False)
+                True ->
+                  case jira.flag_value(cfg, key, field) {
+                    Ok(value) -> put_flagged(cfg, key, field, value, True)
+                    Error(error) -> jira_error_response(error)
+                  }
+              }
+          }
+      }
+  }
+}
+
+fn put_flagged(
+  cfg: config.Config,
+  key: String,
+  field: jira.FlagField,
+  option_value: String,
+  flagged: Bool,
+) -> wisp.Response {
+  case
+    jira.put(
+      cfg,
+      jira.issue_path(key),
+      flagged_update_body(field, option_value, flagged),
+    )
+  {
+    Ok(_) ->
+      json.object([#("flagged", json.bool(flagged))])
+      |> json.to_string
+      |> wisp.json_response(200)
+    Error(error) -> jira_error_response(error)
+  }
+}
+
+/// The flagged request body shape {"flagged": true | false}. Exposed for
+/// tests.
+pub fn parse_flagged_body(body: String) -> Result(Bool, String) {
+  case json.parse(body, decode.field("flagged", decode.bool, decode.success)) {
+    Ok(flagged) -> Ok(flagged)
+    Error(_) -> Error("expected {\"flagged\": true | false} JSON")
+  }
+}
+
+/// The Jira edit-issue body that flags or unflags an issue. Exposed for tests.
+pub fn flagged_update_body(
+  field: jira.FlagField,
+  option_value: String,
+  flagged: Bool,
+) -> String {
+  let field_value = case field.kind, flagged {
+    jira.BooleanField, _ -> json.bool(flagged)
+    jira.OptionField, True ->
+      json.array(
+        [json.object([#("value", json.string(option_value))])],
+        fn(value) { value },
+      )
+    jira.OptionField, False -> json.array([], fn(value) { value })
+  }
+  json.object([
+    #("fields", json.object([#(field.id, field_value)])),
+  ])
+  |> json.to_string
+}
+
 /// GET /jira/issue/:key/assignable — the issue's assignment candidates,
 /// pruned to the app's user shape.
 fn assignable_users(key: String) -> wisp.Response {
@@ -848,16 +936,20 @@ fn board_issues(request: wisp.Request, board_id: String) -> wisp.Response {
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
-          case jira.board_issues(cfg, board_id) {
-            Ok(issues) -> {
-              let ordered = merge_with_saved_order(issues, view_id)
-              json.object([
-                #("issues", json.array(ordered, types.issue_to_json)),
-              ])
-              |> json.to_string
-              |> wisp.json_response(200)
-            }
+          case jira.flag_field(cfg) {
             Error(error) -> jira_error_response(error)
+            Ok(field) ->
+              case jira.board_issues(cfg, board_id, field.id) {
+                Ok(issues) -> {
+                  let ordered = merge_with_saved_order(issues, view_id)
+                  json.object([
+                    #("issues", json.array(ordered, types.issue_to_json)),
+                  ])
+                  |> json.to_string
+                  |> wisp.json_response(200)
+                }
+                Error(error) -> jira_error_response(error)
+              }
           }
       }
     }
@@ -937,21 +1029,34 @@ fn set_headers(
 }
 
 /// Issue detail data for the UI panel: fetch
-/// GET /rest/api/3/issue/:key?fields=... and pass the raw JSON through —
-/// the browser decodes it with the shared issue_detail decoder.
+/// GET /rest/api/3/issue/:key?fields=..., decode the Jira shape with the
+/// site's flag field id, and re-encode in the same app shape as /jira/search
+/// so the browser never needs Jira custom-field ids.
 /// shortcut: detail is fetched fresh on every open; add a local detail cache
 /// if offline detail reads ever matter.
 fn issue(key: String) -> wisp.Response {
   case config.load() {
     Error(message) -> json_error("configuration_incomplete", message, 503)
     Ok(cfg) ->
-      case
-        jira.get_with_query(cfg, jira.issue_path(key), [
-          #("fields", jira.issue_fields),
-        ])
-      {
-        Ok(body) -> wisp.json_response(body, 200)
+      case jira.flag_field(cfg) {
         Error(error) -> jira_error_response(error)
+        Ok(field) ->
+          case
+            jira.get_with_query(cfg, jira.issue_path(key), [
+              #("fields", jira.issue_fields(field.id)),
+            ])
+          {
+            Ok(body) ->
+              case json.parse(body, types.issue_detail_decoder(field.id)) {
+                Ok(detail) ->
+                  types.issue_detail_to_json(detail)
+                  |> json.to_string
+                  |> wisp.json_response(200)
+                Error(error) ->
+                  json_error("decode_failed", string.inspect(error), 502)
+              }
+            Error(error) -> jira_error_response(error)
+          }
       }
   }
 }
@@ -984,6 +1089,14 @@ fn jira_error_response(error: jira.JiraError) -> wisp.Response {
           <> int.to_string(limit)
           <> " issues. Narrow the JQL or pick a smaller board.",
         413,
+      )
+    jira.FlaggedFieldMissing ->
+      json_error(
+        "flagged_field_missing",
+        "Could not find a Jira field named \"Flagged\". Set "
+          <> "JIRA_FLAGGED_FIELD to its custom field id (for example "
+          <> "customfield_10021).",
+        502,
       )
   }
 }
