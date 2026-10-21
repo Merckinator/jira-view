@@ -2132,32 +2132,45 @@ fn find_assignee(
 
 fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
   html.aside([attribute.class("jv-detail")], [
-    html.div([attribute.class(detail_head_class(detail))], [
-      html.div([attribute.class("jv-detail-head-text")], [
-        html.h2([], [text(detail_title(detail))]),
-        html.p([attribute.class("jv-detail-meta")], [
-          text(detail_meta(detail)),
-        ]),
+    html.div(
+      [attribute.class(detail_top_class(detail))],
+      list.flatten([
+        [
+          html.div([attribute.class("jv-detail-head")], [
+            html.div([attribute.class("jv-detail-head-text")], [
+              html.h2([], [text(detail_title(detail))]),
+              html.p([attribute.class("jv-detail-meta")], [
+                text(detail_meta(detail)),
+              ]),
+            ]),
+            html.button(
+              [attribute.class("jv-close"), event.on_click(CloseDetail)],
+              [text("✕")],
+            ),
+          ]),
+        ],
+        case detail {
+          DetailLoading(key) -> [html.p([], [text("Loading " <> key <> "…")])]
+          DetailFailed(message) -> [
+            html.p([attribute.class("jv-error")], [text("Error: " <> message)]),
+          ]
+          DetailLoaded(info) -> [
+            flag_section(info.issue),
+            assignee_section(model, info.issue),
+            case model.write_error {
+              Some(message) ->
+                html.p([attribute.class("jv-write-error")], [text(message)])
+              None -> element.none()
+            },
+            labels_section(model, info.issue.labels),
+            transitions_row(model),
+          ]
+        },
       ]),
-      html.button([attribute.class("jv-close"), event.on_click(CloseDetail)], [
-        text("✕"),
-      ]),
-    ]),
+    ),
     case detail {
-      DetailLoading(key) -> html.p([], [text("Loading " <> key <> "…")])
-      DetailFailed(message) ->
-        html.p([attribute.class("jv-error")], [text("Error: " <> message)])
       DetailLoaded(info) ->
         html.div([attribute.class("jv-detail-body")], [
-          flag_section(info.issue),
-          assignee_section(model, info.issue),
-          case model.write_error {
-            Some(message) ->
-              html.p([attribute.class("jv-write-error")], [text(message)])
-            None -> element.none()
-          },
-          labels_section(model, info.issue.labels),
-          transitions_row(model),
           adf_view.render(info.description),
           attachments_section(info.attachments),
           comments_section(
@@ -2171,15 +2184,16 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
             model.worklog_draft,
           ),
         ])
+      _ -> element.none()
     },
   ])
 }
 
-fn detail_head_class(detail: Detail) -> String {
+fn detail_top_class(detail: Detail) -> String {
   case detail {
     DetailLoaded(info) if info.issue.flagged ->
-      "jv-detail-head jv-detail-head-flagged"
-    _ -> "jv-detail-head"
+      "jv-detail-top jv-detail-top-flagged"
+    _ -> "jv-detail-top"
   }
 }
 
