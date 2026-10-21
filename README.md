@@ -16,9 +16,10 @@ support, or stability promise.
   ordering.
 - Drag-and-drop row ordering (or keyboard shortcuts) layered over Jira's sort;
   new issues append at the end.
-- Inline issue detail with transitions, assignee, comments, work logs, labels,
-  flag toggling, and attachment previews. Flagged issues get a faint red row
-  tint in the list.
+- Inline issue detail with summary editing, transitions, assignee, comments
+  with basic formatting, work logs, labels, flag toggling, attachment previews,
+  and an Open in Jira link. Flagged issues get a faint red row tint in the
+  list.
 - Auto/light/dark color-scheme toggle; Auto follows the operating system.
 - Talks to Jira Cloud through a local proxy; credentials stay in `.env` and
   never reach the browser.
@@ -86,13 +87,16 @@ Configuration is read from the environment on each request:
 - Views: pick one in the toolbar, `+ New view` to create, `Edit` to rename,
   re-source (JQL or a board's issues), choose columns, or delete. The JQL box
   + Refresh run the edited query without saving it; saving is explicit.
-- In the detail panel: transition buttons (required `resolution` fields get a
-  picker, others are refused with Jira's field list), an assignee picker over
-  Jira's assignable users (including unassign), a Flagged checkbox, a comment
-  box, a work-log form, and label chips with add/remove controls — all
-  optimistic, undone by a refetch on failure. Attachments render inline (or
-  download) through the local proxy. List rows show labels under the summary;
-  flagged rows also get a faint red tint.
+- In the detail panel: edit the summary inline, use transition buttons
+  (required `resolution` fields get a picker, others are refused with Jira's
+  field list), pick an assignee from Jira's assignable users (including
+  unassign), toggle Flagged, add comments, log work, and add/remove label chips
+  — all optimistic, undone by a refetch on failure. Comments accept basic
+  formatting: blank lines separate paragraphs, `- ` makes bullets, `1. ` makes
+  numbered lists, and `# ` makes headings. Richer formatting and description
+  edits stay in Jira; the detail header links there. Attachments render inline
+  (or download) through the local proxy. List rows show labels under the
+  summary; flagged rows also get a faint red tint.
 - The native Flagged field is discovered per site by its name. If your site
   uses a renamed field or the write fails with “not on the appropriate
   screen”, set `JIRA_FLAGGED_FIELD` and/or add Flagged to the issue Edit

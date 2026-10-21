@@ -44,3 +44,13 @@ export function focus_table() {
   const table = document.querySelector(".jv-table");
   if (table) table.focus({ preventScroll: true });
 }
+
+// Editing a summary replaces the heading with an input; focus and select it so
+// typing replaces the old value.
+export function focus_summary_input() {
+  const input = document.querySelector(".jv-summary-input");
+  if (input) {
+    input.focus();
+    input.select();
+  }
+}

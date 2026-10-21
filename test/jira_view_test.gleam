@@ -680,6 +680,74 @@ pub fn parse_write_bodies_test() {
   |> should.be_error
 }
 
+pub fn comment_post_body_test() {
+  let text = "# Notes\n- did a thing"
+  json.parse(
+    web.comment_post_body(text),
+    decode.field("body", adf.adf_decoder(), decode.success),
+  )
+  |> should.equal(Ok(adf.basic_document(text)))
+}
+
+// summary: request parsing + the Jira edit-issue body
+
+pub fn parse_summary_body_test() {
+  web.parse_summary_body("{\"summary\": \"  New summary  \"}")
+  |> should.equal(Ok("New summary"))
+
+  web.parse_summary_body("{\"summary\": \"   \"}")
+  |> should.be_error
+
+  web.parse_summary_body("{}")
+  |> should.be_error
+
+  web.parse_summary_body("{\"summary\": 42}")
+  |> should.be_error
+}
+
+pub fn summary_update_body_test() {
+  web.summary_update_body("New summary")
+  |> should.equal("{\"fields\":{\"summary\":\"New summary\"}}")
+}
+
+pub fn summary_route_bad_body_test() {
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/summary")
+    |> simulate.json_body(json.object([#("summary", json.string("  "))]))
+  web.handle_request(request).status |> should.equal(400)
+}
+
+pub fn summary_route_requires_put_test() {
+  web.handle_request(local_request(http.Get, "/jira/issue/KAN-1/summary")).status
+  |> should.equal(405)
+}
+
+pub fn summary_route_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/summary")
+    |> simulate.json_body(
+      json.object([#("summary", json.string("New summary"))]),
+    )
+  web.handle_request(request).status |> should.equal(502)
+}
+
+// Open in Jira: a local redirect, never a leaked base URL in the UI
+
+pub fn open_issue_redirects_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://acme.atlassian.net")
+  let resp =
+    web.handle_request(local_request(http.Get, "/jira/issue/KAN-1/open"))
+  resp.status |> should.equal(303)
+  resp.headers
+  |> list.key_find("location")
+  |> should.equal(Ok("https://acme.atlassian.net/browse/KAN-1"))
+}
+
 // labels: request parsing + the Jira edit-issue body
 
 pub fn parse_labels_body_test() {

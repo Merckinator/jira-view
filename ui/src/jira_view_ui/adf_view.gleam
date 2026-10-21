@@ -32,7 +32,8 @@ fn inline(nodes: List(AdfNode)) -> List(Element(msg)) {
   list.map(nodes, fn(node) {
     case node.kind {
       "text" -> marked(node)
-      // non-text inline nodes (mention, emoji, hardBreak…): text stands in
+      "hardBreak" -> html.br([])
+      // non-text inline nodes (mention, emoji…): text stands in
       _ -> text(node.text)
     }
   })

@@ -16,6 +16,9 @@ fn attach_keys_ffi(combos: List(String), on_key: fn(String) -> Nil) -> Nil
 @external(javascript, "./keyboard_ffi.mjs", "focus_table")
 fn focus_table_ffi() -> Nil
 
+@external(javascript, "./keyboard_ffi.mjs", "focus_summary_input")
+fn focus_summary_input_ffi() -> Nil
+
 pub fn attach(bindings: List(#(String, msg))) -> Effect(msg) {
   effect.from(fn(dispatch) {
     attach_keys_ffi(list.map(bindings, fn(binding) { binding.0 }), fn(key) {
@@ -31,4 +34,9 @@ pub fn attach(bindings: List(#(String, msg))) -> Effect(msg) {
 /// users can keep using j/k/Enter without tabbing through the toolbar again.
 pub fn focus_table() -> Effect(msg) {
   effect.after_paint(fn(_, _) { focus_table_ffi() })
+}
+
+/// Focus and select the detail header's summary input after Edit is clicked.
+pub fn focus_summary() -> Effect(msg) {
+  effect.after_paint(fn(_, _) { focus_summary_input_ffi() })
 }

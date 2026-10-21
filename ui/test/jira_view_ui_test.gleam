@@ -161,6 +161,7 @@ fn test_model() -> jira_view_ui.Model {
     assignable: None,
     resolutions: None,
     resolution_draft: "",
+    summary_edit: None,
     write_error: None,
     comment_draft: "",
     pending_comments: [],
@@ -309,6 +310,130 @@ pub fn enter_is_ignored_while_detail_is_open_test() {
   let #(next, _) = jira_view_ui.update(model, jira_view_ui.Open)
   next.selected
   |> should.equal(Some(jira_view_ui.DetailLoading("B")))
+}
+
+// ————— summary editing —————
+
+pub fn edit_summary_fills_the_draft_test() {
+  let model =
+    jira_view_ui.Model(..test_model(), selected: Some(loaded_detail("B", [])))
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.EditSummary)
+  next.summary_edit |> should.equal(Some("B"))
+}
+
+pub fn edit_summary_is_ignored_before_the_detail_loads_test() {
+  let #(next, _) = jira_view_ui.update(test_model(), jira_view_ui.EditSummary)
+  next.summary_edit |> should.equal(None)
+}
+
+pub fn set_summary_draft_updates_the_edit_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: Some(loaded_detail("B", [])),
+      summary_edit: Some("B"),
+    )
+  let #(next, _) =
+    jira_view_ui.update(model, jira_view_ui.SetSummaryDraft("Renamed"))
+  next.summary_edit |> should.equal(Some("Renamed"))
+}
+
+pub fn set_summary_draft_is_ignored_without_an_edit_test() {
+  let #(next, _) =
+    jira_view_ui.update(test_model(), jira_view_ui.SetSummaryDraft("Renamed"))
+  next.summary_edit |> should.equal(None)
+}
+
+pub fn save_summary_updates_detail_and_row_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([sample_issue("B")]),
+      selected: Some(loaded_detail("B", [])),
+      summary_edit: Some("Renamed"),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.SaveSummary)
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.summary |> should.equal("Renamed")
+
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.summary |> should.equal("Renamed")
+
+  next.summary_edit |> should.equal(None)
+  next.write_error |> should.equal(None)
+}
+
+pub fn blank_summary_is_rejected_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: Some(loaded_detail("B", [])),
+      summary_edit: Some("   "),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.SaveSummary)
+
+  next.summary_edit |> should.equal(Some("   "))
+  next.write_error
+  |> should.equal(Some("Summary must not be empty."))
+}
+
+pub fn unchanged_summary_exits_edit_without_a_write_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: Some(loaded_detail("B", [])),
+      summary_edit: Some("  B  "),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.SaveSummary)
+
+  next.summary_edit |> should.equal(None)
+  next.selected |> should.equal(Some(loaded_detail("B", [])))
+}
+
+pub fn cancel_summary_edit_discards_the_draft_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: Some(loaded_detail("B", [])),
+      summary_edit: Some("Renamed"),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.CancelSummaryEdit)
+
+  next.summary_edit |> should.equal(None)
+  next.selected |> should.equal(Some(loaded_detail("B", [])))
+}
+
+pub fn escape_cancels_summary_edit_test() {
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      selected: Some(loaded_detail("B", [])),
+      summary_edit: Some("Renamed"),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.Escape)
+
+  next.summary_edit |> should.equal(None)
+  next.selected |> should.equal(Some(loaded_detail("B", [])))
+}
+
+pub fn summary_error_is_reported_test() {
+  let #(next, _) =
+    jira_view_ui.update(
+      test_model(),
+      jira_view_ui.GotSummarySaved("B", Error("nope")),
+    )
+  next.write_error |> should.equal(Some("nope"))
+  next.summary_edit |> should.equal(None)
+}
+
+pub fn stale_summary_reply_is_ignored_test() {
+  let #(next, _) =
+    jira_view_ui.update(
+      test_model(),
+      jira_view_ui.GotSummarySaved("A", Error("nope")),
+    )
+  next.write_error |> should.equal(None)
 }
 
 // ————— resolution picker —————

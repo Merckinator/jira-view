@@ -356,6 +356,208 @@ pub fn decode_adf_link_mark_test() {
   mark.href |> should.equal("https://x")
 }
 
+// basic composer format -> ADF (comments)
+
+pub fn basic_document_paragraphs_test() {
+  adf.basic_document("first line\nsecond line\n\nnext paragraph")
+  |> should.equal(
+    adf.AdfNode(
+      "doc",
+      "",
+      [
+        adf.AdfNode(
+          "paragraph",
+          "",
+          [
+            adf.AdfNode("text", "first line", [], []),
+            adf.AdfNode("hardBreak", "", [], []),
+            adf.AdfNode("text", "second line", [], []),
+          ],
+          [],
+        ),
+        adf.AdfNode(
+          "paragraph",
+          "",
+          [
+            adf.AdfNode("text", "next paragraph", [], []),
+          ],
+          [],
+        ),
+      ],
+      [],
+    ),
+  )
+}
+
+pub fn basic_document_lists_test() {
+  adf.basic_document("- one\n- two\n\n1. first\n2. second")
+  |> should.equal(
+    adf.AdfNode(
+      "doc",
+      "",
+      [
+        adf.AdfNode(
+          "bulletList",
+          "",
+          [
+            adf.AdfNode(
+              "listItem",
+              "",
+              [
+                adf.AdfNode(
+                  "paragraph",
+                  "",
+                  [
+                    adf.AdfNode("text", "one", [], []),
+                  ],
+                  [],
+                ),
+              ],
+              [],
+            ),
+            adf.AdfNode(
+              "listItem",
+              "",
+              [
+                adf.AdfNode(
+                  "paragraph",
+                  "",
+                  [
+                    adf.AdfNode("text", "two", [], []),
+                  ],
+                  [],
+                ),
+              ],
+              [],
+            ),
+          ],
+          [],
+        ),
+        adf.AdfNode(
+          "orderedList",
+          "",
+          [
+            adf.AdfNode(
+              "listItem",
+              "",
+              [
+                adf.AdfNode(
+                  "paragraph",
+                  "",
+                  [
+                    adf.AdfNode("text", "first", [], []),
+                  ],
+                  [],
+                ),
+              ],
+              [],
+            ),
+            adf.AdfNode(
+              "listItem",
+              "",
+              [
+                adf.AdfNode(
+                  "paragraph",
+                  "",
+                  [
+                    adf.AdfNode("text", "second", [], []),
+                  ],
+                  [],
+                ),
+              ],
+              [],
+            ),
+          ],
+          [],
+        ),
+      ],
+      [],
+    ),
+  )
+}
+
+pub fn basic_document_heading_test() {
+  adf.basic_document("# Notes\n- did a thing")
+  |> should.equal(
+    adf.AdfNode(
+      "doc",
+      "",
+      [
+        adf.AdfNode(
+          "heading",
+          "",
+          [
+            adf.AdfNode("text", "Notes", [], []),
+          ],
+          [],
+        ),
+        adf.AdfNode(
+          "bulletList",
+          "",
+          [
+            adf.AdfNode(
+              "listItem",
+              "",
+              [
+                adf.AdfNode(
+                  "paragraph",
+                  "",
+                  [
+                    adf.AdfNode("text", "did a thing", [], []),
+                  ],
+                  [],
+                ),
+              ],
+              [],
+            ),
+          ],
+          [],
+        ),
+      ],
+      [],
+    ),
+  )
+}
+
+pub fn basic_document_keeps_years_as_prose_test() {
+  adf.basic_document("2026. was a good year")
+  |> should.equal(
+    adf.AdfNode(
+      "doc",
+      "",
+      [
+        adf.AdfNode(
+          "paragraph",
+          "",
+          [
+            adf.AdfNode("text", "2026. was a good year", [], []),
+          ],
+          [],
+        ),
+      ],
+      [],
+    ),
+  )
+}
+
+pub fn basic_document_round_trip_test() {
+  let document =
+    adf.basic_document(
+      "# Notes\n\nfirst line\nsecond line\n\n- one\n- two\n\n1. first\n2. second",
+    )
+  parse(json.to_string(adf.adf_to_json(document)), adf.adf_decoder())
+  |> should.equal(Ok(document))
+}
+
+pub fn heading_json_has_level_test() {
+  adf.basic_document("# Notes")
+  |> adf.adf_to_json
+  |> json.to_string
+  |> should.equal(
+    "{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"heading\",\"attrs\":{\"level\":1},\"content\":[{\"type\":\"text\",\"text\":\"Notes\"}]}]}",
+  )
+}
+
 // a decoded + re-encoded issue survives the app-shape round trip
 // (this is the shape /jira/search serves and the frontend / cache readers
 // decode)

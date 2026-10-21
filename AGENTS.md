@@ -42,6 +42,8 @@ Gleeunit discovers every `test/**/*_test.gleam` function whose name ends in `_te
 - Jira search uses the modern `/rest/api/3/search/jql`, not deprecated `/rest/api/3/search`; boards use `/rest/agile/1.0`. A view is capped at 2000 issues.
 - The Flagged custom field id varies between Cloud sites. It is discovered by name via `/rest/api/3/field`, cached per base URL in `persistent_term`, and overridable with `JIRA_FLAGGED_FIELD`; the option value is overridable with `JIRA_FLAGGED_VALUE`. Do not hardcode a `customfield_…` id.
 - `/jira/issue/:key` is normalized to the app shape (issue + ADF content lists + pruned comments/worklog/attachments), so the UI never needs Jira custom-field ids.
+- Summaries are edited via `PUT /jira/issue/:key/summary` (trimmed, non-empty). Descriptions are intentionally read-only; `/jira/issue/:key/open` redirects to `<JIRA_BASE_URL>/browse/<key>` for fuller editing.
+- New comments are built with `adf.basic_document`: blank lines separate paragraphs, `- ` bullets, `1. ` numbered lists, `# ` headings. Existing comment/description ADF still renders read-only.
 - When adding an issue field, update the `search_fields`/`issue_fields` functions, `shared/types.gleam` and its decoders together.
 - Per-view ordering is overlaid on Jira's order by `db.merge_view_order`; a save replaces the entire key list. The tests pin these semantics.
 - The UI deliberately avoids `lustre_http` (it conflicts with stdlib 1.x) and uses `ui/src/jira_view_ui/fetch_ffi.mjs`; don't reintroduce `lustre_http`.

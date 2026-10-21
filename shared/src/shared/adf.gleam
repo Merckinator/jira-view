@@ -9,8 +9,10 @@
 //// plain text instead of vanishing.
 
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json.{type Json}
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
 
 pub type AdfMark {
@@ -83,6 +85,176 @@ pub fn paragraph_document(text: String) -> AdfNode {
   ])
 }
 
+/// Build an ADF document from the comment composer's basic text format.
+///
+/// Blank lines separate blocks, a single newline is a line break, `- ` starts
+/// a bullet item, `1. ` starts a numbered item, and `# ` starts a level-1
+/// heading. Inline marks are not parsed: their text stays as plain text.
+pub fn basic_document(text: String) -> AdfNode {
+  let lines =
+    text
+    |> string.replace("\r\n", "\n")
+    |> string.replace("\r", "\n")
+    |> string.split("\n")
+
+  let state =
+    list.fold(lines, BasicState([], [], None, []), fn(state, line) {
+      case string.trim(line) {
+        "" -> flush_blocks(state)
+        _ -> parse_basic_line(state, line)
+      }
+    })
+
+  let state = flush_blocks(state)
+  AdfNode(kind: "doc", text: "", marks: [], content: list.reverse(state.blocks))
+}
+
+type ListKind {
+  BulletListKind
+  OrderedListKind
+}
+
+/// Reverse accumulators while scanning the composer text: finished blocks,
+/// the current paragraph's lines, and the current list's kind and items.
+type BasicState {
+  BasicState(
+    blocks: List(AdfNode),
+    paragraph: List(String),
+    list_kind: Option(ListKind),
+    items: List(String),
+  )
+}
+
+fn parse_basic_line(state: BasicState, line: String) -> BasicState {
+  case bullet_item(line) {
+    Some(item) -> add_list_item(flush_paragraph(state), BulletListKind, item)
+    None ->
+      case ordered_item(line) {
+        Some(item) ->
+          add_list_item(flush_paragraph(state), OrderedListKind, item)
+        None ->
+          case string.starts_with(line, "# ") {
+            True ->
+              state
+              |> flush_blocks
+              |> prepend_block(
+                heading_node(string.trim(string.drop_start(line, 2))),
+              )
+            False -> add_paragraph_line(flush_list(state), string.trim(line))
+          }
+      }
+  }
+}
+
+fn bullet_item(line: String) -> Option(String) {
+  case string.starts_with(line, "- ") {
+    True -> Some(string.trim(string.drop_start(line, 2)))
+    False -> None
+  }
+}
+
+fn ordered_item(line: String) -> Option(String) {
+  case string.split_once(line, ". ") {
+    Ok(#(prefix, rest)) ->
+      case int.parse(string.trim(prefix)) {
+        Ok(number) ->
+          // Cap the marker length so a sentence like "2026. was a good year"
+          // stays prose instead of becoming an ordered list item.
+          case number > 0 && string.length(prefix) <= 3 {
+            True -> Some(string.trim(rest))
+            False -> None
+          }
+        Error(_) -> None
+      }
+    Error(_) -> None
+  }
+}
+
+fn add_list_item(
+  state: BasicState,
+  kind: ListKind,
+  item: String,
+) -> BasicState {
+  case state.list_kind {
+    Some(existing) if existing == kind ->
+      BasicState(..state, items: [item, ..state.items])
+    Some(_) -> add_list_item(flush_list(state), kind, item)
+    None -> BasicState(..state, list_kind: Some(kind), items: [item])
+  }
+}
+
+fn add_paragraph_line(state: BasicState, line: String) -> BasicState {
+  BasicState(..state, paragraph: [line, ..state.paragraph])
+}
+
+fn prepend_block(state: BasicState, block: AdfNode) -> BasicState {
+  BasicState(..state, blocks: [block, ..state.blocks])
+}
+
+fn flush_blocks(state: BasicState) -> BasicState {
+  state |> flush_paragraph |> flush_list
+}
+
+fn flush_paragraph(state: BasicState) -> BasicState {
+  case state.paragraph {
+    [] -> state
+    lines ->
+      BasicState(
+        ..state,
+        blocks: [paragraph_node(list.reverse(lines)), ..state.blocks],
+        paragraph: [],
+      )
+  }
+}
+
+fn flush_list(state: BasicState) -> BasicState {
+  case state.list_kind, state.items {
+    Some(kind), [_, ..] as items ->
+      BasicState(
+        ..state,
+        blocks: [list_node(kind, list.reverse(items)), ..state.blocks],
+        list_kind: None,
+        items: [],
+      )
+    _, _ -> BasicState(..state, list_kind: None, items: [])
+  }
+}
+
+fn paragraph_node(lines: List(String)) -> AdfNode {
+  AdfNode("paragraph", "", inline_with_breaks(lines), [])
+}
+
+fn inline_with_breaks(lines: List(String)) -> List(AdfNode) {
+  lines
+  |> list.index_map(fn(line, index) {
+    let text_node = AdfNode("text", line, [], [])
+    case index {
+      0 -> [text_node]
+      _ -> [AdfNode("hardBreak", "", [], []), text_node]
+    }
+  })
+  |> list.flatten
+}
+
+fn list_node(kind: ListKind, items: List(String)) -> AdfNode {
+  let node_kind = case kind {
+    BulletListKind -> "bulletList"
+    OrderedListKind -> "orderedList"
+  }
+  AdfNode(
+    node_kind,
+    "",
+    list.map(items, fn(item) {
+      AdfNode("listItem", "", [paragraph_node([item])], [])
+    }),
+    [],
+  )
+}
+
+fn heading_node(text: String) -> AdfNode {
+  AdfNode("heading", "", [AdfNode("text", text, [], [])], [])
+}
+
 /// Encode back to ADF JSON. `doc` nodes carry `"version": 1` (Jira rejects
 /// documents without it); text/marks/content are emitted only when present,
 /// mirroring what Jira itself produces.
@@ -90,6 +262,10 @@ pub fn adf_to_json(node: AdfNode) -> Json {
   let base = [#("type", json.string(node.kind))]
   let base = case node.kind {
     "doc" -> list.append(base, [#("version", json.int(1))])
+    "heading" ->
+      list.append(base, [
+        #("attrs", json.object([#("level", json.int(1))])),
+      ])
     _ -> base
   }
   let base = case node.text {

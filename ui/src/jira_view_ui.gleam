@@ -6,9 +6,9 @@
 //// and keyboard navigation (Tab into the table; j/k cursor, Shift+j/K
 //// relocate, Enter opens the detail in place of the list, Esc closes it and
 //// returns focus to the list). Phase 4: optimistic
-//// writes in the panel — transitions
-//// (status flips locally first), comments, work log, labels and assignee;
-//// failures undo themselves by refetching. Phase 5: saved views — a picker over
+//// writes in the panel — summary, transitions (status flips locally first),
+//// comments (basic formatting), work log, labels and assignee; failures undo
+//// themselves by refetching. Phase 5: saved views — a picker over
 //// GET /jira/views (each with its own source: JQL or a board's active
 //// sprint), its own column set, and its own private ordering; an edit
 //// panel creates/renames/re-sources/deletes views. The browser only ever
@@ -67,6 +67,9 @@ pub type Model {
     assignable: Option(Result(List(types.User), String)),
     resolutions: Option(Result(List(types.Resolution), String)),
     resolution_draft: String,
+    /// The summary being edited; `None` means the header shows the read-only
+    /// title. A `Some("")` draft is allowed while typing.
+    summary_edit: Option(String),
     write_error: Option(String),
     comment_draft: String,
     pending_comments: List(String),
@@ -139,6 +142,11 @@ pub type Msg {
   GotDetail(key: String, result: Result(IssueDetail, String))
   Escape
   CloseDetail
+  EditSummary
+  SetSummaryDraft(String)
+  SaveSummary
+  CancelSummaryEdit
+  GotSummarySaved(key: String, result: Result(Nil, String))
   GotTransitions(key: String, result: Result(List(types.Transition), String))
   GotAssignable(key: String, result: Result(List(types.User), String))
   SetAssignee(assignee: Option(types.User))
@@ -197,6 +205,7 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       assignable: None,
       resolutions: None,
       resolution_draft: "",
+      summary_edit: None,
       write_error: None,
       comment_draft: "",
       pending_comments: [],
@@ -515,15 +524,36 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     // focus and returns to the list, where j/k/Enter work again. The view
     // editor keeps its own controls, so there Escape stays a no-op.
     Escape ->
-      case model.selected {
-        Some(_) -> close_detail(model)
+      case model.summary_edit {
+        Some(_) -> cancel_summary_edit(model)
         None ->
-          case model.edit {
-            Some(_) -> #(model, effect.none())
-            None -> #(model, keyboard.focus_table())
+          case model.selected {
+            Some(_) -> close_detail(model)
+            None ->
+              case model.edit {
+                Some(_) -> #(model, effect.none())
+                None -> #(model, keyboard.focus_table())
+              }
           }
       }
     CloseDetail -> close_detail(model)
+    EditSummary -> edit_summary(model)
+    SetSummaryDraft(text) ->
+      case model.summary_edit {
+        Some(_) -> #(Model(..model, summary_edit: Some(text)), effect.none())
+        None -> #(model, effect.none())
+      }
+    SaveSummary -> save_summary(model)
+    CancelSummaryEdit -> cancel_summary_edit(model)
+    GotSummarySaved(_, Ok(_)) -> #(model, effect.none())
+    GotSummarySaved(key, Error(message)) ->
+      case is_selected(model, key) {
+        True -> #(
+          Model(..model, write_error: Some(message), summary_edit: None),
+          fetch_detail(key),
+        )
+        False -> #(model, effect.none())
+      }
     GotTransitions(key, Ok(transitions)) ->
       case is_selected(model, key) {
         True -> #(
@@ -778,6 +808,7 @@ fn switch_to_view(model: Model, view: types.ViewDef) -> #(Model, Effect(Msg)) {
       cursor: None,
       order_error: None,
       write_error: None,
+      summary_edit: None,
       transitions: None,
       assignable: None,
       comment_draft: "",
@@ -969,7 +1000,7 @@ fn decode_issues(view_id: String, response: Result(String, String)) -> Msg {
 /// have to be restored once Lustre renders it again.
 fn close_detail(model: Model) -> #(Model, Effect(Msg)) {
   #(
-    Model(..model, selected: None, assignable: None),
+    Model(..model, selected: None, assignable: None, summary_edit: None),
     effect.batch([
       sortable.attach(".jv-tbody", Dropped),
       keyboard.focus_table(),
@@ -988,6 +1019,7 @@ fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
       selected: Some(DetailLoading(key)),
       transitions: None,
       assignable: None,
+      summary_edit: None,
       write_error: None,
       comment_draft: "",
       pending_comments: [],
@@ -1002,6 +1034,53 @@ fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
       resolutions_effect,
     ]),
   )
+}
+
+fn edit_summary(model: Model) -> #(Model, Effect(Msg)) {
+  case model.selected {
+    Some(DetailLoaded(info)) -> #(
+      Model(..model, summary_edit: Some(info.issue.summary), write_error: None),
+      keyboard.focus_summary(),
+    )
+    _ -> #(model, effect.none())
+  }
+}
+
+fn cancel_summary_edit(model: Model) -> #(Model, Effect(Msg)) {
+  #(Model(..model, summary_edit: None, write_error: None), effect.none())
+}
+
+fn save_summary(model: Model) -> #(Model, Effect(Msg)) {
+  case model.selected, model.summary_edit {
+    Some(DetailLoaded(info)), Some(draft) -> {
+      let summary = string.trim(draft)
+      case summary {
+        "" -> #(
+          Model(..model, write_error: Some("Summary must not be empty.")),
+          effect.none(),
+        )
+        _ ->
+          case summary == info.issue.summary {
+            True -> cancel_summary_edit(model)
+            False -> {
+              let issue = types.Issue(..info.issue, summary: summary)
+              let detail = types.IssueDetail(..info, issue: issue)
+              #(
+                Model(
+                  ..model,
+                  summary_edit: None,
+                  write_error: None,
+                  selected: Some(DetailLoaded(detail)),
+                  state: sync_ready_row(model.state, issue),
+                ),
+                put_summary(info.issue.key, summary),
+              )
+            }
+          }
+      }
+    }
+    _, _ -> #(model, effect.none())
+  }
 }
 
 /// The key of the issue whose detail panel is open.
@@ -1158,6 +1237,14 @@ fn fetch_assignable(key: String) -> Effect(Msg) {
       Error(message) -> GotAssignable(key, Error(message))
     }
   })
+}
+
+fn put_summary(key: String, summary: String) -> Effect(Msg) {
+  fetch.put_json(
+    "/jira/issue/" <> key <> "/summary",
+    json.object([#("summary", json.string(summary))]) |> json.to_string,
+    fn(result) { GotSummarySaved(key, result) },
+  )
 }
 
 fn put_assignee(key: String, assignee: Option(types.User)) -> Effect(Msg) {
@@ -2160,6 +2247,7 @@ fn find_assignee(
 }
 
 fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
+  let editing_summary = model.summary_edit != None
   html.aside([attribute.class("jv-detail")], [
     html.div(
       [attribute.class(detail_top_class(detail))],
@@ -2167,15 +2255,28 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
         [
           html.div([attribute.class("jv-detail-head")], [
             html.div([attribute.class("jv-detail-head-text")], [
-              html.h2([], [text(detail_title(detail))]),
+              html.h2([attribute.hidden(editing_summary)], [
+                text(detail_title(detail)),
+              ]),
+              html.input([
+                attribute.type_("text"),
+                attribute.class("jv-summary-input"),
+                attribute.autocomplete("off"),
+                attribute.value(option.unwrap(model.summary_edit, "")),
+                attribute.hidden(!editing_summary),
+                event.on_input(SetSummaryDraft),
+                event.on_keydown(fn(key) {
+                  case key {
+                    "Enter" -> SaveSummary
+                    _ -> NoOp
+                  }
+                }),
+              ]),
               html.p([attribute.class("jv-detail-meta")], [
                 text(detail_meta(detail)),
               ]),
             ]),
-            html.button(
-              [attribute.class("jv-close"), event.on_click(CloseDetail)],
-              [text("✕")],
-            ),
+            detail_head_actions(model, detail),
           ]),
         ],
         case detail {
@@ -2216,6 +2317,73 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
       _ -> element.none()
     },
   ])
+}
+
+/// Header controls stay mounted and toggle through `hidden`, so Lustre's
+/// event handlers keep stable node paths while the summary is being edited.
+fn detail_head_actions(model: Model, detail: Detail) -> Element(Msg) {
+  let editing = model.summary_edit != None
+  let key = detail_key(detail)
+  let href = case key {
+    Some(key) -> "/jira/issue/" <> key <> "/open"
+    None -> "#"
+  }
+  html.div([attribute.class("jv-detail-head-actions")], [
+    html.button(
+      [
+        attribute.class("jv-summary-edit"),
+        attribute.title("Edit summary"),
+        attribute.hidden(!can_edit_summary(detail) || editing),
+        event.on_click(EditSummary),
+      ],
+      [text("Edit")],
+    ),
+    html.button(
+      [
+        attribute.class("jv-summary-save"),
+        attribute.hidden(!editing),
+        event.on_click(SaveSummary),
+      ],
+      [text("Save")],
+    ),
+    html.button(
+      [
+        attribute.class("jv-summary-cancel"),
+        attribute.hidden(!editing),
+        event.on_click(CancelSummaryEdit),
+      ],
+      [text("Cancel")],
+    ),
+    html.a(
+      [
+        attribute.class("jv-open-jira"),
+        attribute.href(href),
+        attribute.target("_blank"),
+        attribute.rel("noopener noreferrer"),
+        attribute.title("Open this issue in Jira"),
+        attribute.hidden(key == None),
+      ],
+      [text("Open in Jira")],
+    ),
+    html.button([attribute.class("jv-close"), event.on_click(CloseDetail)], [
+      text("✕"),
+    ]),
+  ])
+}
+
+fn detail_key(detail: Detail) -> Option(String) {
+  case detail {
+    DetailLoading(key) -> Some(key)
+    DetailLoaded(info) -> Some(info.issue.key)
+    DetailFailed(_) -> None
+  }
+}
+
+fn can_edit_summary(detail: Detail) -> Bool {
+  case detail {
+    DetailLoaded(_) -> True
+    _ -> False
+  }
 }
 
 fn detail_top_class(detail: Detail) -> String {
@@ -2411,7 +2579,7 @@ fn comments_section(
       list.map(pending, fn(pending_text) {
         html.div([attribute.class("jv-comment jv-pending")], [
           html.div([attribute.class("jv-comment-meta")], [text("sending…")]),
-          adf_view.render(adf_document(pending_text)),
+          adf_view.render(adf.basic_document(pending_text).content),
         ])
       }),
       list.map(comments, fn(comment) {
@@ -2431,6 +2599,12 @@ fn comments_section(
           ],
           draft,
         ),
+        html.p([attribute.class("jv-comment-hint jv-note")], [
+          text(
+            "Basic formatting: blank lines = paragraphs, "
+            <> "\"- \" = bullets, \"1. \" = numbers, \"# \" = headings.",
+          ),
+        ]),
         html.div([attribute.class("jv-actions")], [
           html.button(
             [attribute.class("jv-comment-send"), event.on_click(CommentClicked)],
@@ -2492,14 +2666,6 @@ fn worklog_section(
       ],
     ]),
   )
-}
-
-/// The ADF document for an optimistic comment still being sent.
-fn adf_document(text: String) -> List(adf.AdfNode) {
-  case adf.paragraph_document(text).content {
-    [paragraph, ..] -> [paragraph]
-    [] -> []
-  }
 }
 
 fn detail_title(detail: Detail) -> String {

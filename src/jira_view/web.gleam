@@ -57,6 +57,12 @@ fn handle_local_request(request: wisp.Request) -> wisp.Response {
       wisp.require_method(request, http.Get, fn() { search(request) })
     ["jira", "issue", key] ->
       wisp.require_method(request, http.Get, fn() { issue(key) })
+    ["jira", "issue", key, "open"] ->
+      wisp.require_method(request, http.Get, fn() { open_issue(key) })
+    ["jira", "issue", key, "summary"] ->
+      wisp.require_method(request, http.Put, fn() {
+        update_summary(request, key)
+      })
     ["jira", "issue", key, "transitions"] ->
       wisp.require_method(request, http.Get, fn() { issue_transitions(key) })
     ["jira", "issue", key, "transition"] ->
@@ -263,6 +269,64 @@ fn issue_transitions(key: String) -> wisp.Response {
   }
 }
 
+/// GET /jira/issue/:key/open — a local link that redirects to the issue's
+/// Jira page, so the UI never needs JIRA_BASE_URL and credentials stay here.
+fn open_issue(key: String) -> wisp.Response {
+  case config.load() {
+    Error(message) -> json_error("configuration_incomplete", message, 503)
+    Ok(cfg) -> wisp.redirect(cfg.base_url <> "/browse/" <> key)
+  }
+}
+
+/// PUT /jira/issue/:key/summary — body {"summary": "…"}. Jira's edit-issue
+/// endpoint replaces the summary; the UI updates optimistically and refetches
+/// on failure.
+fn update_summary(request: wisp.Request, key: String) -> wisp.Response {
+  use <- wisp.require_content_type(request, "application/json")
+  use body <- wisp.require_string_body(request)
+  case parse_summary_body(body) {
+    Error(message) -> json_error("bad_request", message, 400)
+    Ok(summary) ->
+      case config.load() {
+        Error(message) -> json_error("configuration_incomplete", message, 503)
+        Ok(cfg) ->
+          case
+            jira.put(cfg, jira.issue_path(key), summary_update_body(summary))
+          {
+            Ok(_) ->
+              json.object([#("summary", json.string(summary))])
+              |> json.to_string
+              |> wisp.json_response(200)
+            Error(error) -> jira_error_response(error)
+          }
+      }
+  }
+}
+
+/// The summary request body shape {"summary": "…"}. The value is trimmed and
+/// must not be empty. Exposed for tests.
+pub fn parse_summary_body(body: String) -> Result(String, String) {
+  case
+    json.parse(body, decode.field("summary", decode.string, decode.success))
+  {
+    Error(_) -> Error("expected {\"summary\": \"…\"} JSON")
+    Ok(summary) ->
+      case string.trim(summary) {
+        "" -> Error("summary must not be empty")
+        summary -> Ok(summary)
+      }
+  }
+}
+
+/// The Jira edit-issue body that replaces an issue's summary. Exposed for
+/// tests.
+pub fn summary_update_body(summary: String) -> String {
+  json.object([
+    #("fields", json.object([#("summary", json.string(summary))])),
+  ])
+  |> json.to_string
+}
+
 /// GET /jira/resolutions — Jira's global resolution values, raw passthrough
 /// for the transition picker.
 fn resolutions() -> wisp.Response {
@@ -435,13 +499,8 @@ fn comment(request: wisp.Request, key: String) -> wisp.Response {
     Ok(text) ->
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
-        Ok(cfg) -> {
-          let document =
-            json.object([
-              #("body", adf.adf_to_json(adf.paragraph_document(text))),
-            ])
-            |> json.to_string
-          case jira.post(cfg, jira.comment_path(key), document) {
+        Ok(cfg) ->
+          case jira.post(cfg, jira.comment_path(key), comment_post_body(text)) {
             Ok(response) ->
               case json.parse(response, types.jira_comment_decoder()) {
                 Ok(created) ->
@@ -453,7 +512,6 @@ fn comment(request: wisp.Request, key: String) -> wisp.Response {
               }
             Error(error) -> jira_error_response(error)
           }
-        }
       }
   }
 }
@@ -464,6 +522,15 @@ pub fn parse_comment_body(body: String) -> Result(String, String) {
     Ok(text) -> Ok(string.trim(text))
     Error(_) -> Error("expected {\"text\": \"…\"} JSON")
   }
+}
+
+/// The Jira comment body for the composer's basic text format. Exposed for
+/// tests.
+pub fn comment_post_body(text: String) -> String {
+  json.object([
+    #("body", adf.adf_to_json(adf.basic_document(text))),
+  ])
+  |> json.to_string
 }
 
 /// POST /jira/issue/:key/worklog — body {"time_spent": "25m"} (Jira's
