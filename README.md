@@ -16,8 +16,8 @@ support, or stability promise.
   ordering.
 - Drag-and-drop row ordering (or keyboard shortcuts) layered over Jira's sort;
   new issues append at the end.
-- Inline issue detail with transitions, comments, work logs, labels, and
-  attachment previews.
+- Inline issue detail with transitions, assignee, comments, work logs, labels,
+  and attachment previews.
 - Talks to Jira Cloud through a local proxy; credentials stay in `.env` and
   never reach the browser.
 - Local SQLite database for views and ordering. No telemetry.
@@ -83,10 +83,11 @@ Configuration is read from the environment on each request:
   re-source (JQL or a board's issues), choose columns, or delete. The JQL box
   + Refresh run the edited query without saving it; saving is explicit.
 - In the detail panel: transition buttons (required `resolution` fields get a
-  picker, others are refused with Jira's field list), a comment box, a
-  work-log form, and label chips with add/remove controls — all optimistic,
-  undone by a refetch on failure. Attachments render inline (or download)
-  through the local proxy. List rows show labels under the summary.
+  picker, others are refused with Jira's field list), an assignee picker over
+  Jira's assignable users (including unassign), a comment box, a work-log
+  form, and label chips with add/remove controls — all optimistic, undone by
+  a refetch on failure. Attachments render inline (or download) through the
+  local proxy. List rows show labels under the summary.
 - A view is capped at 2000 issues.
 
 ## Security & limitations

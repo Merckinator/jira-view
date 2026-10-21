@@ -49,6 +49,32 @@ pub fn decode_me_missing_optional_fields_test() {
   me.time_zone |> should.equal("")
 }
 
+// decoding the assignable-user search and the backend's app-shaped wrapper
+
+const sample_assignable_users =
+  "[{\"accountId\":\"557058:f1a2b3c4\",\"displayName\":\"Jeff Merckens\",\"avatarUrls\":{\"48x48\":\"https://acme.atlassian.net/48.png\"}}]"
+
+pub fn decode_jira_users_test() {
+  parse(sample_assignable_users, types.jira_users_decoder())
+  |> should.equal(
+    Ok([
+      types.User(
+        "557058:f1a2b3c4",
+        "Jeff Merckens",
+        "https://acme.atlassian.net/48.png",
+      ),
+    ]),
+  )
+}
+
+pub fn decode_users_response_test() {
+  parse(
+    "{\"users\":[{\"account_id\":\"abc\",\"display_name\":\"Jeff\",\"avatar_url\":\"u\"}]}",
+    types.users_response_decoder(),
+  )
+  |> should.equal(Ok([types.User("abc", "Jeff", "u")]))
+}
+
 // decoding against the shape of a captured Jira /rest/api/3/search/jql
 // page (project KAN, bounded jql, fields=summary,status,assignee,updated)
 

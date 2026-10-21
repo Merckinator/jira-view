@@ -623,6 +623,60 @@ pub fn labels_route_unreachable_test() {
   web.handle_request(request).status |> should.equal(502)
 }
 
+// assignee: request parsing, the Jira assign body, and the candidate proxy
+
+pub fn parse_assignee_body_test() {
+  web.parse_assignee_body("{\"account_id\": \" 557058:abc \"}")
+  |> should.equal(Ok(Some("557058:abc")))
+
+  web.parse_assignee_body("{\"account_id\": null}")
+  |> should.equal(Ok(None))
+
+  web.parse_assignee_body("{}")
+  |> should.equal(Ok(None))
+
+  web.parse_assignee_body("{\"account_id\": \"\"}")
+  |> should.equal(Ok(None))
+
+  web.parse_assignee_body("{\"account_id\": 42}")
+  |> should.be_error
+}
+
+pub fn assignee_update_body_test() {
+  web.assignee_update_body(Some("557058:abc"))
+  |> should.equal("{\"accountId\":\"557058:abc\"}")
+
+  web.assignee_update_body(None)
+  |> should.equal("{\"accountId\":null}")
+}
+
+pub fn assignee_route_bad_body_test() {
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/assignee")
+    |> simulate.json_body(json.object([#("account_id", json.int(42))]))
+  web.handle_request(request).status |> should.equal(400)
+}
+
+pub fn assignee_route_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  let request =
+    local_request(http.Put, "/jira/issue/KAN-1/assignee")
+    |> simulate.json_body(
+      json.object([#("account_id", json.string("557058:abc"))]),
+    )
+  web.handle_request(request).status |> should.equal(502)
+}
+
+pub fn assignable_route_unreachable_test() {
+  envoy.set("JIRA_EMAIL", "jeff@example.com")
+  envoy.set("JIRA_API_TOKEN", "test-token")
+  envoy.set("JIRA_BASE_URL", "https://127.0.0.1:1")
+  web.handle_request(local_request(http.Get, "/jira/issue/KAN-1/assignable")).status
+  |> should.equal(502)
+}
+
 pub fn transition_post_route_unreachable_test() {
   envoy.set("JIRA_EMAIL", "jeff@example.com")
   envoy.set("JIRA_API_TOKEN", "test-token")

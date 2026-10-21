@@ -253,6 +253,18 @@ fn app_user_decoder() -> decode.Decoder(User) {
   decode.success(User(account_id:, display_name:, avatar_url:))
 }
 
+/// The bare user array from GET /rest/api/3/user/assignable/search.
+pub fn jira_users_decoder() -> decode.Decoder(List(User)) {
+  decode.list(user_decoder())
+}
+
+/// The app's {"users": [...]} shape (the backend re-encodes the Jira array
+/// with user_to_json, so the UI decodes one shape everywhere).
+pub fn users_response_decoder() -> decode.Decoder(List(User)) {
+  use users <- decode.field("users", decode.list(app_user_decoder()))
+  decode.success(users)
+}
+
 fn app_issue_decoder() -> decode.Decoder(Issue) {
   use key <- decode.field("key", decode.string)
   use id <- decode.field("id", decode.string)

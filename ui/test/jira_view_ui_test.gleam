@@ -1,5 +1,5 @@
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleeunit
 import gleeunit/should
 import jira_view_ui
@@ -24,6 +24,10 @@ fn sample_issue(key: String) -> types.Issue {
 
 fn sample_issues() -> List(types.Issue) {
   [sample_issue("A"), sample_issue("B"), sample_issue("C")]
+}
+
+fn sample_user(account_id: String, display_name: String) -> types.User {
+  types.User(account_id: account_id, display_name: display_name, avatar_url: "")
 }
 
 fn keys(issues: List(types.Issue)) -> List(String) {
@@ -151,6 +155,7 @@ fn test_model() -> jira_view_ui.Model {
     order_error: None,
     selected: Some(jira_view_ui.DetailLoading("B")),
     transitions: None,
+    assignable: None,
     resolutions: None,
     resolution_draft: "",
     write_error: None,
@@ -187,6 +192,27 @@ pub fn stale_transitions_reply_is_ignored_test() {
     jira_view_ui.update(test_model(), jira_view_ui.GotTransitions("A", Ok([])))
   next.transitions
   |> should.equal(None)
+}
+
+pub fn stale_assignable_reply_is_ignored_test() {
+  let #(next, _) =
+    jira_view_ui.update(
+      test_model(),
+      jira_view_ui.GotAssignable("A", Ok([sample_user("u", "User")])),
+    )
+  next.assignable
+  |> should.equal(None)
+}
+
+pub fn matching_assignable_reply_is_stored_test() {
+  let users = [sample_user("u", "User")]
+  let #(next, _) =
+    jira_view_ui.update(
+      test_model(),
+      jira_view_ui.GotAssignable("B", Ok(users)),
+    )
+  next.assignable
+  |> should.equal(Some(Ok(users)))
 }
 
 pub fn stale_view_reply_is_ignored_test() {
@@ -403,4 +429,69 @@ pub fn invalid_label_is_rejected_test() {
 
   next.write_error
   |> should.equal(Some("Labels can't contain spaces."))
+}
+
+// ————— assignee —————
+
+fn loaded_assignee_detail(
+  key: String,
+  assignee: Option(types.User),
+) -> jira_view_ui.Detail {
+  jira_view_ui.DetailLoaded(
+    types.IssueDetail(
+      issue: types.Issue(..sample_issue(key), assignee: assignee),
+      description: [],
+      comments: [],
+      worklog: [],
+      attachments: [],
+    ),
+  )
+}
+
+pub fn set_assignee_updates_detail_and_row_test() {
+  let user = sample_user("u1", "Jeff")
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([sample_issue("B")]),
+      selected: Some(loaded_assignee_detail("B", None)),
+      assignable: Some(Ok([user])),
+    )
+  let #(next, _) =
+    jira_view_ui.update(model, jira_view_ui.SetAssignee(Some(user)))
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.assignee |> should.equal(Some(user))
+
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.assignee |> should.equal(Some(user))
+
+  next.write_error |> should.equal(None)
+}
+
+pub fn unassign_updates_detail_and_row_test() {
+  let user = sample_user("u1", "Jeff")
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([sample_issue("B")]),
+      selected: Some(loaded_assignee_detail("B", Some(user))),
+      assignable: Some(Ok([user])),
+    )
+  let #(next, _) = jira_view_ui.update(model, jira_view_ui.SetAssignee(None))
+
+  let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
+  info.issue.assignee |> should.equal(None)
+
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.assignee |> should.equal(None)
+}
+
+pub fn assignee_error_is_reported_test() {
+  let #(next, _) =
+    jira_view_ui.update(
+      test_model(),
+      jira_view_ui.GotAssignee("B", Error("nope")),
+    )
+  next.write_error |> should.equal(Some("nope"))
 }

@@ -70,6 +70,15 @@ pub fn worklog_path(key: String) -> String {
   issue_path(key) <> "/worklog"
 }
 
+/// Path of the assignee PUT endpoint of an issue (Jira's assign endpoint).
+pub fn assignee_path(key: String) -> String {
+  issue_path(key) <> "/assignee"
+}
+
+/// Assignment candidates for an issue. Scoping the search by `issueKey` makes
+/// Jira apply the project's permissions and workflow rules.
+pub const assignable_users_path = "/rest/api/3/user/assignable/search"
+
 /// Global resolution values for the transition picker.
 pub const resolutions_path = "/rest/api/3/resolution"
 
@@ -92,6 +101,24 @@ pub fn myself(cfg: Config) -> Result(types.Me, JiraError) {
   use body <- result.try(get(cfg, myself_path))
   case json.parse(body, types.me_decoder()) {
     Ok(me) -> Ok(me)
+    Error(error) -> Error(Decode(error))
+  }
+}
+
+/// The users assignable to an issue, one request (Jira caps maxResults at
+/// 1000). The UI offers them in the detail panel's assignee picker.
+pub fn assignable_users(
+  cfg: Config,
+  key: String,
+) -> Result(List(types.User), JiraError) {
+  use body <- result.try(
+    get_with_query(cfg, assignable_users_path, [
+      #("issueKey", key),
+      #("maxResults", "1000"),
+    ]),
+  )
+  case json.parse(body, types.jira_users_decoder()) {
+    Ok(users) -> Ok(users)
     Error(error) -> Error(Decode(error))
   }
 }

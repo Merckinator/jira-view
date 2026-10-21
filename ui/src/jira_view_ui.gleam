@@ -7,8 +7,8 @@
 //// relocate, Enter opens the detail in place of the list, Esc closes it and
 //// returns focus to the list). Phase 4: optimistic
 //// writes in the panel — transitions
-//// (status flips locally first), comments, work log; failures undo
-//// themselves by refetching. Phase 5: saved views — a picker over
+//// (status flips locally first), comments, work log, labels and assignee;
+//// failures undo themselves by refetching. Phase 5: saved views — a picker over
 //// GET /jira/views (each with its own source: JQL or a board's active
 //// sprint), its own column set, and its own private ordering; an edit
 //// panel creates/renames/re-sources/deletes views. The browser only ever
@@ -60,6 +60,8 @@ pub type Model {
     // — detail panel writes (Phase 4) —
     selected: Option(Detail),
     transitions: Option(Result(List(types.Transition), String)),
+    /// Candidates for the detail panel's assignee picker.
+    assignable: Option(Result(List(types.User), String)),
     resolutions: Option(Result(List(types.Resolution), String)),
     resolution_draft: String,
     write_error: Option(String),
@@ -134,6 +136,9 @@ pub type Msg {
   Escape
   CloseDetail
   GotTransitions(key: String, result: Result(List(types.Transition), String))
+  GotAssignable(key: String, result: Result(List(types.User), String))
+  SetAssignee(assignee: Option(types.User))
+  GotAssignee(key: String, result: Result(Nil, String))
   GotResolutions(Result(List(types.Resolution), String))
   SetResolution(String)
   TransitionClicked(transition: types.Transition)
@@ -182,6 +187,7 @@ pub fn init(_flags) -> #(Model, Effect(Msg)) {
       order_error: None,
       selected: None,
       transitions: None,
+      assignable: None,
       resolutions: None,
       resolution_draft: "",
       write_error: None,
@@ -520,6 +526,42 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         )
         False -> #(model, effect.none())
       }
+    GotAssignable(key, Ok(users)) ->
+      case is_selected(model, key) {
+        True -> #(Model(..model, assignable: Some(Ok(users))), effect.none())
+        False -> #(model, effect.none())
+      }
+    GotAssignable(key, Error(message)) ->
+      case is_selected(model, key) {
+        True -> #(
+          Model(..model, assignable: Some(Error(message))),
+          effect.none(),
+        )
+        False -> #(model, effect.none())
+      }
+    SetAssignee(assignee) ->
+      case selected_key(model) {
+        Error(_) -> #(model, effect.none())
+        Ok(key) ->
+          case same_assignee(current_assignee(model), assignee) {
+            True -> #(model, effect.none())
+            False -> #(
+              Model(..with_assignee(model, key, assignee), write_error: None),
+              put_assignee(key, assignee),
+            )
+          }
+      }
+    GotAssignee(_, Ok(_)) -> #(model, effect.none())
+    GotAssignee(key, Error(message)) ->
+      case is_selected(model, key) {
+        True -> #(
+          Model(..model, write_error: Some(message)),
+          // The optimistic change is rolled back by the fresh detail; its
+          // response also syncs the matching list row.
+          fetch_detail(key),
+        )
+        False -> #(model, effect.none())
+      }
     GotResolutions(Ok(resolutions)) -> #(
       Model(
         ..model,
@@ -700,6 +742,7 @@ fn switch_to_view(model: Model, view: types.ViewDef) -> #(Model, Effect(Msg)) {
       order_error: None,
       write_error: None,
       transitions: None,
+      assignable: None,
       comment_draft: "",
       pending_comments: [],
       worklog_draft: "",
@@ -889,7 +932,7 @@ fn decode_issues(view_id: String, response: Result(String, String)) -> Msg {
 /// have to be restored once Lustre renders it again.
 fn close_detail(model: Model) -> #(Model, Effect(Msg)) {
   #(
-    Model(..model, selected: None),
+    Model(..model, selected: None, assignable: None),
     effect.batch([
       sortable.attach(".jv-tbody", Dropped),
       keyboard.focus_table(),
@@ -907,6 +950,7 @@ fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
       ..model,
       selected: Some(DetailLoading(key)),
       transitions: None,
+      assignable: None,
       write_error: None,
       comment_draft: "",
       pending_comments: [],
@@ -914,7 +958,12 @@ fn open_detail(model: Model, key: String) -> #(Model, Effect(Msg)) {
       pending_worklog: [],
       label_draft: "",
     ),
-    effect.batch([fetch_detail(key), fetch_transitions(key), resolutions_effect]),
+    effect.batch([
+      fetch_detail(key),
+      fetch_transitions(key),
+      fetch_assignable(key),
+      resolutions_effect,
+    ]),
   )
 }
 
@@ -1059,6 +1108,37 @@ fn fetch_transitions(key: String) -> Effect(Msg) {
       Error(message) -> GotTransitions(key, Error(message))
     }
   })
+}
+
+fn fetch_assignable(key: String) -> Effect(Msg) {
+  fetch.get("/jira/issue/" <> key <> "/assignable", fn(response) {
+    case response {
+      Ok(body) ->
+        case json.parse(body, types.users_response_decoder()) {
+          Ok(users) -> GotAssignable(key, Ok(users))
+          Error(error) -> GotAssignable(key, Error(string.inspect(error)))
+        }
+      Error(message) -> GotAssignable(key, Error(message))
+    }
+  })
+}
+
+fn put_assignee(key: String, assignee: Option(types.User)) -> Effect(Msg) {
+  let account_id = case assignee {
+    Some(user) -> Some(user.account_id)
+    None -> None
+  }
+  fetch.put_json(
+    "/jira/issue/" <> key <> "/assignee",
+    json.object([#("account_id", json.nullable(account_id, json.string))])
+      |> json.to_string,
+    fn(result) {
+      case result {
+        Ok(_) -> GotAssignee(key, Ok(Nil))
+        Error(message) -> GotAssignee(key, Error(message))
+      }
+    },
+  )
 }
 
 fn post_transition(
@@ -1306,6 +1386,68 @@ fn label_has_whitespace(label: String) -> Bool {
   label
   |> string.to_graphemes
   |> list.any(fn(grapheme) { list.contains([" ", "\t", "\n", "\r"], grapheme) })
+}
+
+// ————— assignee editing —————
+
+fn current_assignee(model: Model) -> Option(types.User) {
+  case model.selected {
+    Some(DetailLoaded(info)) -> info.issue.assignee
+    _ -> None
+  }
+}
+
+fn same_assignee(a: Option(types.User), b: Option(types.User)) -> Bool {
+  case a, b {
+    Some(a), Some(b) -> a.account_id == b.account_id
+    None, None -> True
+    _, _ -> False
+  }
+}
+
+/// Apply an assignee change to both the open detail and its list row.
+fn with_assignee(
+  model: Model,
+  key: String,
+  assignee: Option(types.User),
+) -> Model {
+  Model(
+    ..model,
+    state: set_issue_assignee(model.state, key, assignee),
+    selected: set_detail_assignee(model.selected, assignee),
+  )
+}
+
+fn set_detail_assignee(
+  selected: Option(Detail),
+  assignee: Option(types.User),
+) -> Option(Detail) {
+  case selected {
+    Some(DetailLoaded(info)) ->
+      Some(DetailLoaded(
+        types.IssueDetail(
+          ..info,
+          issue: types.Issue(..info.issue, assignee: assignee),
+        ),
+      ))
+    selected -> selected
+  }
+}
+
+fn set_issue_assignee(
+  state: State,
+  key: String,
+  assignee: Option(types.User),
+) -> State {
+  case state {
+    Ready(issues) ->
+      Ready(
+        map_issue(issues, key, fn(issue) {
+          types.Issue(..issue, assignee: assignee)
+        }),
+      )
+    state -> state
+  }
 }
 
 fn append_comment(
@@ -1774,23 +1916,119 @@ fn summary_cell(issue: Issue) -> Element(Msg) {
 
 fn assignee_cell(issue: Issue) -> Element(Msg) {
   html.td([attribute.class("jv-col-assignee")], [
-    case issue.assignee {
-      Some(user) if user.account_id != "" && user.avatar_url != "" ->
-        html.img([
-          attribute.class("jv-avatar"),
-          attribute.src("/jira/avatar/" <> user.account_id),
-          attribute.alt(""),
-        ])
-      _ -> element.none()
-    },
+    assignee_avatar(issue.assignee),
     text(assignee_name(issue.assignee)),
   ])
+}
+
+fn assignee_avatar(assignee: Option(types.User)) -> Element(Msg) {
+  case assignee {
+    Some(user) if user.account_id != "" && user.avatar_url != "" ->
+      html.img([
+        attribute.class("jv-avatar"),
+        attribute.src("/jira/avatar/" <> user.account_id),
+        attribute.alt(""),
+      ])
+    _ -> element.none()
+  }
 }
 
 fn assignee_name(assignee: option.Option(types.User)) -> String {
   case assignee {
     Some(user) -> user.display_name
     None -> "—"
+  }
+}
+
+/// The open issue's assignee, always visible, plus the picker that changes it.
+/// The candidate list is fetched when the panel opens; an unavailable list
+/// leaves the current assignee readable instead of hiding it.
+fn assignee_section(model: Model, issue: Issue) -> Element(Msg) {
+  html.div([attribute.class("jv-detail-assignee")], [
+    html.span([attribute.class("jv-note")], [text("Assignee:")]),
+    html.span([attribute.class("jv-assignee-current")], [
+      assignee_avatar(issue.assignee),
+      text(assignee_name(issue.assignee)),
+    ]),
+    case model.assignable {
+      Some(Ok(users)) -> assignee_select(issue.assignee, users)
+      Some(Error(message)) ->
+        html.span([attribute.class("jv-write-error")], [
+          text("Assignees unavailable: " <> message),
+        ])
+      None -> element.none()
+    },
+  ])
+}
+
+fn assignee_select(
+  current: Option(types.User),
+  users: List(types.User),
+) -> Element(Msg) {
+  let current_id = case current {
+    Some(user) -> user.account_id
+    None -> ""
+  }
+  let users = assignee_choices(users, current)
+  html.select(
+    [
+      attribute.class("jv-assignee-select"),
+      attribute.title("Change assignee"),
+      attribute.value(current_id),
+      event.on_change(fn(account_id) {
+        SetAssignee(find_assignee(users, account_id))
+      }),
+    ],
+    list.flatten([
+      [
+        html.option(
+          [attribute.value(""), attribute.selected(current_id == "")],
+          "Unassigned",
+        ),
+      ],
+      list.map(users, fn(user) {
+        html.option(
+          [
+            attribute.value(user.account_id),
+            attribute.selected(user.account_id == current_id),
+          ],
+          user.display_name,
+        )
+      }),
+    ]),
+  )
+}
+
+/// The candidates Jira returned, with the current assignee kept selectable
+/// even when it is no longer in the assignable search.
+fn assignee_choices(
+  users: List(types.User),
+  current: Option(types.User),
+) -> List(types.User) {
+  let users = list.filter(users, fn(user) { user.account_id != "" })
+  case current {
+    Some(user) ->
+      case
+        list.any(users, fn(existing) { existing.account_id == user.account_id })
+      {
+        True -> users
+        False -> [user, ..users]
+      }
+    None -> users
+  }
+}
+
+fn find_assignee(
+  users: List(types.User),
+  account_id: String,
+) -> Option(types.User) {
+  case account_id {
+    "" -> None
+    _ ->
+      case list.find(users, fn(user) { user.account_id == account_id }) {
+        Ok(user) -> Some(user)
+        Error(_) -> None
+      }
   }
 }
 
@@ -1811,6 +2049,7 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
           html.p([attribute.class("jv-detail-meta")], [
             text(info.issue.key <> " · " <> info.issue.status.name),
           ]),
+          assignee_section(model, info.issue),
           case model.write_error {
             Some(message) ->
               html.p([attribute.class("jv-write-error")], [text(message)])

@@ -69,6 +69,12 @@ fn handle_local_request(request: wisp.Request) -> wisp.Response {
       wisp.require_method(request, http.Put, fn() {
         update_labels(request, key)
       })
+    ["jira", "issue", key, "assignable"] ->
+      wisp.require_method(request, http.Get, fn() { assignable_users(key) })
+    ["jira", "issue", key, "assignee"] ->
+      wisp.require_method(request, http.Put, fn() {
+        update_assignee(request, key)
+      })
     ["jira", "attachment", attachment_id] ->
       wisp.require_method(request, http.Get, fn() { attachment(attachment_id) })
     ["jira", "avatar", account_id] ->
@@ -565,6 +571,87 @@ pub fn labels_update_body(labels: List(String)) -> String {
   json.object([
     #("fields", json.object([#("labels", json.array(labels, json.string))])),
   ])
+  |> json.to_string
+}
+
+/// GET /jira/issue/:key/assignable — the issue's assignment candidates,
+/// pruned to the app's user shape.
+fn assignable_users(key: String) -> wisp.Response {
+  case config.load() {
+    Error(message) -> json_error("configuration_incomplete", message, 503)
+    Ok(cfg) ->
+      case jira.assignable_users(cfg, key) {
+        Ok(users) ->
+          json.object([#("users", json.array(users, types.user_to_json))])
+          |> json.to_string
+          |> wisp.json_response(200)
+        Error(error) -> jira_error_response(error)
+      }
+  }
+}
+
+/// PUT /jira/issue/:key/assignee — body {"account_id": "…"} or
+/// {"account_id": null} to unassign. Jira's assign endpoint takes a single
+/// accountId; the UI updates optimistically and refetches the issue if the
+/// write is rejected.
+fn update_assignee(request: wisp.Request, key: String) -> wisp.Response {
+  use <- wisp.require_content_type(request, "application/json")
+  use body <- wisp.require_string_body(request)
+  case parse_assignee_body(body) {
+    Error(message) -> json_error("bad_request", message, 400)
+    Ok(account_id) ->
+      case config.load() {
+        Error(message) -> json_error("configuration_incomplete", message, 503)
+        Ok(cfg) ->
+          case
+            jira.put(
+              cfg,
+              jira.assignee_path(key),
+              assignee_update_body(account_id),
+            )
+          {
+            Ok(_) ->
+              json.object([#("assigned", json.bool(True))])
+              |> json.to_string
+              |> wisp.json_response(200)
+            Error(error) -> jira_error_response(error)
+          }
+      }
+  }
+}
+
+/// The assignee request body shape {"account_id": "…"}; null, absent or an
+/// empty string all mean "unassign". Exposed for tests.
+pub fn parse_assignee_body(body: String) -> Result(Option(String), String) {
+  case json.parse(body, assignee_body_decoder()) {
+    Error(_) -> Error("expected {\"account_id\": \"<account id>\" | null} JSON")
+    Ok(account_id) -> Ok(normalize_account_id(account_id))
+  }
+}
+
+fn assignee_body_decoder() -> decode.Decoder(Option(String)) {
+  decode.optional_field(
+    "account_id",
+    None,
+    decode.optional(decode.string),
+    decode.success,
+  )
+}
+
+fn normalize_account_id(account_id: Option(String)) -> Option(String) {
+  case account_id {
+    Some(account_id) ->
+      case string.trim(account_id) {
+        "" -> None
+        account_id -> Some(account_id)
+      }
+    None -> None
+  }
+}
+
+/// The Jira assign endpoint body. Exposed for tests.
+pub fn assignee_update_body(account_id: Option(String)) -> String {
+  json.object([#("accountId", json.nullable(account_id, json.string))])
   |> json.to_string
 }
 
