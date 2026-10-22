@@ -422,19 +422,21 @@ pub fn summary_error_is_reported_test() {
   let #(next, _) =
     jira_view_ui.update(
       test_model(),
-      jira_view_ui.GotSummarySaved("B", Error("nope")),
+      jira_view_ui.GotSummarySaved("B", "Renamed", Error("nope")),
     )
   next.write_error |> should.equal(Some("nope"))
-  next.summary_edit |> should.equal(None)
+  // The failed draft stays in the editor instead of being discarded.
+  next.summary_edit |> should.equal(Some("Renamed"))
 }
 
 pub fn stale_summary_reply_is_ignored_test() {
   let #(next, _) =
     jira_view_ui.update(
       test_model(),
-      jira_view_ui.GotSummarySaved("A", Error("nope")),
+      jira_view_ui.GotSummarySaved("A", "Renamed", Error("nope")),
     )
   next.write_error |> should.equal(None)
+  next.summary_edit |> should.equal(None)
 }
 
 // ————— resolution picker —————
@@ -497,15 +499,14 @@ pub fn delete_requires_two_clicks_test() {
 // ————— labels —————
 
 fn loaded_detail(key: String, labels: List(String)) -> jira_view_ui.Detail {
-  jira_view_ui.DetailLoaded(
-    types.IssueDetail(
-      issue: types.Issue(..sample_issue(key), labels: labels),
-      description: [],
-      comments: [],
-      worklog: [],
-      attachments: [],
-    ),
-  )
+  jira_view_ui.DetailLoaded(types.IssueDetail(
+    issue: types.Issue(..sample_issue(key), labels: labels),
+    description: [],
+    comments: [],
+    worklog: [],
+    attachments: [],
+    flags_supported: True,
+  ))
 }
 
 pub fn add_label_updates_detail_and_row_test() {
@@ -566,15 +567,14 @@ fn loaded_assignee_detail(
   key: String,
   assignee: Option(types.User),
 ) -> jira_view_ui.Detail {
-  jira_view_ui.DetailLoaded(
-    types.IssueDetail(
-      issue: types.Issue(..sample_issue(key), assignee: assignee),
-      description: [],
-      comments: [],
-      worklog: [],
-      attachments: [],
-    ),
-  )
+  jira_view_ui.DetailLoaded(types.IssueDetail(
+    issue: types.Issue(..sample_issue(key), assignee: assignee),
+    description: [],
+    comments: [],
+    worklog: [],
+    attachments: [],
+    flags_supported: True,
+  ))
 }
 
 pub fn set_assignee_updates_detail_and_row_test() {
@@ -628,15 +628,14 @@ pub fn assignee_error_is_reported_test() {
 // ————— flag —————
 
 fn loaded_flag_detail(key: String, flagged: Bool) -> jira_view_ui.Detail {
-  jira_view_ui.DetailLoaded(
-    types.IssueDetail(
-      issue: types.Issue(..sample_issue(key), flagged: flagged),
-      description: [],
-      comments: [],
-      worklog: [],
-      attachments: [],
-    ),
-  )
+  jira_view_ui.DetailLoaded(types.IssueDetail(
+    issue: types.Issue(..sample_issue(key), flagged: flagged),
+    description: [],
+    comments: [],
+    worklog: [],
+    attachments: [],
+    flags_supported: True,
+  ))
 }
 
 pub fn set_flag_updates_detail_and_row_test() {
@@ -671,6 +670,26 @@ pub fn unflag_updates_detail_and_row_test() {
   let assert Some(jira_view_ui.DetailLoaded(info)) = next.selected
   info.issue.flagged |> should.be_false
 
+  let assert jira_view_ui.Ready([row]) = next.state
+  row.flagged |> should.be_false
+}
+
+// A refetch that lands after the panel closed still undoes an optimistic row
+// change (the failure path calls fetch_detail for exactly this).
+pub fn detail_reply_after_close_syncs_row_test() {
+  let assert jira_view_ui.DetailLoaded(detail) = loaded_flag_detail("B", False)
+  let model =
+    jira_view_ui.Model(
+      ..test_model(),
+      state: jira_view_ui.Ready([
+        types.Issue(..sample_issue("B"), flagged: True),
+      ]),
+      selected: None,
+    )
+  let #(next, _) =
+    jira_view_ui.update(model, jira_view_ui.GotDetail("B", Ok(detail)))
+
+  next.selected |> should.equal(None)
   let assert jira_view_ui.Ready([row]) = next.state
   row.flagged |> should.be_false
 }

@@ -136,6 +136,15 @@ fn me() -> wisp.Response {
   }
 }
 
+/// The discovered flag field's id, or "" when the site has none. Read paths
+/// pass "" to skip the custom field and load the issues unflagged.
+fn flag_field_id(field: Option(jira.FlagField)) -> String {
+  case field {
+    Some(field) -> field.id
+    None -> ""
+  }
+}
+
 /// Search proxy: GET /jira/search?jql=... follows every search page from
 /// Jira and returns the list in the view's merged order — rows the view has
 /// privately ordered keep that order, anything new is appended (see
@@ -153,10 +162,10 @@ fn search(request: wisp.Request) -> wisp.Response {
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
-          case jira.flag_field(cfg) {
+          case jira.flag_field_or_none(cfg) {
             Error(error) -> jira_error_response(error)
             Ok(field) ->
-              case jira.search(cfg, jql, field.id) {
+              case jira.search(cfg, jql, flag_field_id(field)) {
                 Ok(issues) -> {
                   let ordered = merge_with_saved_order(issues, view_id)
                   json.object([
@@ -665,10 +674,17 @@ fn update_flagged(request: wisp.Request, key: String) -> wisp.Response {
             Error(error) -> jira_error_response(error)
             Ok(field) ->
               case flagged {
-                False -> put_flagged(cfg, key, field, "", False)
+                False ->
+                  put_flagged(
+                    cfg,
+                    key,
+                    field,
+                    jira.FlagOption("value", ""),
+                    False,
+                  )
                 True ->
                   case jira.flag_value(cfg, key, field) {
-                    Ok(value) -> put_flagged(cfg, key, field, value, True)
+                    Ok(option) -> put_flagged(cfg, key, field, option, True)
                     Error(error) -> jira_error_response(error)
                   }
               }
@@ -681,14 +697,14 @@ fn put_flagged(
   cfg: config.Config,
   key: String,
   field: jira.FlagField,
-  option_value: String,
+  option: jira.FlagOption,
   flagged: Bool,
 ) -> wisp.Response {
   case
     jira.put(
       cfg,
       jira.issue_path(key),
-      flagged_update_body(field, option_value, flagged),
+      flagged_update_body(field, option, flagged),
     )
   {
     Ok(_) ->
@@ -711,14 +727,14 @@ pub fn parse_flagged_body(body: String) -> Result(Bool, String) {
 /// The Jira edit-issue body that flags or unflags an issue. Exposed for tests.
 pub fn flagged_update_body(
   field: jira.FlagField,
-  option_value: String,
+  option: jira.FlagOption,
   flagged: Bool,
 ) -> String {
   let field_value = case field.kind, flagged {
     jira.BooleanField, _ -> json.bool(flagged)
     jira.OptionField, True ->
       json.array(
-        [json.object([#("value", json.string(option_value))])],
+        [json.object([#(option.key, json.string(option.value))])],
         fn(value) { value },
       )
     jira.OptionField, False -> json.array([], fn(value) { value })
@@ -1003,10 +1019,10 @@ fn board_issues(request: wisp.Request, board_id: String) -> wisp.Response {
       case config.load() {
         Error(message) -> json_error("configuration_incomplete", message, 503)
         Ok(cfg) ->
-          case jira.flag_field(cfg) {
+          case jira.flag_field_or_none(cfg) {
             Error(error) -> jira_error_response(error)
             Ok(field) ->
-              case jira.board_issues(cfg, board_id, field.id) {
+              case jira.board_issues(cfg, board_id, flag_field_id(field)) {
                 Ok(issues) -> {
                   let ordered = merge_with_saved_order(issues, view_id)
                   json.object([
@@ -1105,16 +1121,17 @@ fn issue(key: String) -> wisp.Response {
   case config.load() {
     Error(message) -> json_error("configuration_incomplete", message, 503)
     Ok(cfg) ->
-      case jira.flag_field(cfg) {
+      case jira.flag_field_or_none(cfg) {
         Error(error) -> jira_error_response(error)
-        Ok(field) ->
+        Ok(field) -> {
+          let field_id = flag_field_id(field)
           case
             jira.get_with_query(cfg, jira.issue_path(key), [
-              #("fields", jira.issue_fields(field.id)),
+              #("fields", jira.issue_fields(field_id)),
             ])
           {
             Ok(body) ->
-              case json.parse(body, types.issue_detail_decoder(field.id)) {
+              case json.parse(body, types.issue_detail_decoder(field_id)) {
                 Ok(detail) ->
                   types.issue_detail_to_json(detail)
                   |> json.to_string
@@ -1124,6 +1141,7 @@ fn issue(key: String) -> wisp.Response {
               }
             Error(error) -> jira_error_response(error)
           }
+        }
       }
   }
 }

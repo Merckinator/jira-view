@@ -44,6 +44,13 @@ pub type FlagKind {
   BooleanField
 }
 
+/// One allowed option of an option field. Jira accepts either
+/// `{"value": "Impediment"}` or `{"id": "10019"}`, so the key travels with
+/// the value instead of always writing a `value`.
+pub type FlagOption {
+  FlagOption(key: String, value: String)
+}
+
 /// The subset of GET /rest/api/3/field this app needs.
 pub type JiraField {
   JiraField(
@@ -61,9 +68,10 @@ pub const myself_path = "/rest/api/3/myself"
 pub const search_path = "/rest/api/3/search/jql"
 
 /// The `fields` allowlist sent with search requests; anything not on it is
-/// not fetched. `flagged_field` is appended after discovery.
+/// not fetched. `flagged_field` is appended after discovery; an empty id
+/// means the site has no Flagged field.
 pub fn search_fields(flagged_field: String) -> String {
-  "summary,status,assignee,updated,labels," <> flagged_field
+  append_flagged_field("summary,status,assignee,updated,labels", flagged_field)
 }
 
 /// Rows requested per page. Jira's default is 50; 100 halves the round trips
@@ -82,8 +90,24 @@ pub fn issue_path(key: String) -> String {
 /// The fields the detail panel renders (description arrives as ADF; the
 /// comment, worklog and attachment embeds drive the panel's lists).
 pub fn issue_fields(flagged_field: String) -> String {
-  "summary,description,status,assignee,updated,comment,worklog,attachment,labels,"
-  <> flagged_field
+  append_flagged_field(
+    "summary,description,status,assignee,updated,comment,worklog,attachment,labels",
+    flagged_field,
+  )
+}
+
+fn append_flagged_field(base: String, flagged_field: String) -> String {
+  case flagged_field {
+    "" -> base
+    field -> base <> "," <> field
+  }
+}
+
+/// What is cached per base URL: the discovered field, or the fact that the
+/// site has none (so read paths do not repeat the full field-list call).
+type FlagFieldCache {
+  FlagFieldKnown(FlagField)
+  FlagFieldAbsent
 }
 
 /// The site's flag field. JIRA_FLAGGED_FIELD wins; otherwise the field is
@@ -94,9 +118,11 @@ pub fn flag_field(cfg: Config) -> Result(FlagField, JiraError) {
     Some(id) -> Ok(FlagField(id:, kind: OptionField))
     None -> {
       let cache_key = "jira_view:flagged_field:" <> cfg.base_url
-      let cached: option.Option(FlagField) = persistent_get(cache_key, None)
+      let cached: option.Option(FlagFieldCache) =
+        persistent_get(cache_key, None)
       case cached {
-        Some(field) -> Ok(field)
+        Some(FlagFieldKnown(field)) -> Ok(field)
+        Some(FlagFieldAbsent) -> Error(FlaggedFieldMissing)
         None -> {
           use body <- result.try(get(cfg, fields_path))
           use fields <- result.try(
@@ -107,13 +133,29 @@ pub fn flag_field(cfg: Config) -> Result(FlagField, JiraError) {
           )
           use field <- result.try(case find_flagged_field(fields) {
             Ok(field) -> Ok(field)
-            Error(_) -> Error(FlaggedFieldMissing)
+            Error(_) -> {
+              let _ = persistent_put(cache_key, Some(FlagFieldAbsent))
+              Error(FlaggedFieldMissing)
+            }
           })
-          let _ = persistent_put(cache_key, Some(field))
+          let _ = persistent_put(cache_key, Some(FlagFieldKnown(field)))
           Ok(field)
         }
       }
     }
+  }
+}
+
+/// Read paths tolerate a site without the native Flagged field: they load
+/// unflagged instead of failing the whole list or detail. Flag writes still
+/// call `flag_field` and report the missing field.
+pub fn flag_field_or_none(
+  cfg: Config,
+) -> Result(option.Option(FlagField), JiraError) {
+  case flag_field(cfg) {
+    Ok(field) -> Ok(Some(field))
+    Error(FlaggedFieldMissing) -> Ok(None)
+    Error(error) -> Error(error)
   }
 }
 
@@ -124,20 +166,20 @@ pub fn flag_value(
   cfg: Config,
   key: String,
   field: FlagField,
-) -> Result(String, JiraError) {
+) -> Result(FlagOption, JiraError) {
   case field.kind {
-    BooleanField -> Ok("")
+    BooleanField -> Ok(FlagOption("value", ""))
     OptionField ->
       case cfg.flagged_value {
-        Some(value) -> Ok(value)
+        Some(value) -> Ok(FlagOption("value", value))
         None -> {
           use body <- result.try(get(cfg, editmeta_path(key)))
-          let value = case json.parse(body, flag_option_decoder(field.id)) {
-            Ok(Some(value)) -> value
-            Ok(None) -> "Impediment"
-            Error(_) -> "Impediment"
+          let option = case json.parse(body, flag_option_decoder(field.id)) {
+            Ok(Some(option)) -> option
+            Ok(None) -> FlagOption("value", "Impediment")
+            Error(_) -> FlagOption("value", "Impediment")
           }
-          Ok(value)
+          Ok(option)
         }
       }
   }
@@ -181,29 +223,29 @@ pub fn find_flagged_field(fields: List(JiraField)) -> Result(FlagField, Nil) {
   )
 }
 
-/// The first non-empty option value of the field in an issue's edit metadata.
+/// The first non-empty option of the field in an issue's edit metadata.
 /// Exposed for tests.
 pub fn flag_option_decoder(
   field_id: String,
-) -> decode.Decoder(option.Option(String)) {
+) -> decode.Decoder(option.Option(FlagOption)) {
   use options <- decode.then(decode.optionally_at(
     ["fields", field_id, "allowedValues"],
     [],
     decode.list(flag_option_value_decoder()),
   ))
-  let value = options |> list.find(fn(value) { value != "" })
-  decode.success(case value {
-    Ok(value) -> Some(value)
+  let option = options |> list.find(fn(option) { option.value != "" })
+  decode.success(case option {
+    Ok(option) -> Some(option)
     Error(_) -> None
   })
 }
 
-fn flag_option_value_decoder() -> decode.Decoder(String) {
+fn flag_option_value_decoder() -> decode.Decoder(FlagOption) {
   use value <- decode.optional_field("value", "", decode.string)
   use id <- decode.optional_field("id", "", decode.string)
   case value {
-    "" -> decode.success(id)
-    _ -> decode.success(value)
+    "" -> decode.success(FlagOption("id", id))
+    _ -> decode.success(FlagOption("value", value))
   }
 }
 

@@ -154,7 +154,7 @@ pub type Msg {
   SetSummaryDraft(String)
   SaveSummary
   CancelSummaryEdit
-  GotSummarySaved(key: String, result: Result(Nil, String))
+  GotSummarySaved(key: String, summary: String, result: Result(Nil, String))
   GotTransitions(key: String, result: Result(List(types.Transition), String))
   GotAssignable(key: String, result: Result(List(types.User), String))
   SetAssignee(assignee: Option(types.User))
@@ -541,7 +541,13 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           ),
           effect.none(),
         )
-        False -> #(model, effect.none())
+        False ->
+          // A refetch may still arrive after the panel closed or moved to
+          // another issue; use it to undo an optimistic row change.
+          #(
+            Model(..model, state: sync_ready_row(model.state, detail.issue)),
+            effect.none(),
+          )
       }
     GotDetail(key, Error(message)) ->
       case is_selected(model, key) {
@@ -576,14 +582,21 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       }
     SaveSummary -> save_summary(model)
     CancelSummaryEdit -> cancel_summary_edit(model)
-    GotSummarySaved(_, Ok(_)) -> #(model, effect.none())
-    GotSummarySaved(key, Error(message)) ->
+    GotSummarySaved(_, _, Ok(_)) -> #(model, effect.none())
+    GotSummarySaved(key, summary, Error(message)) ->
       case is_selected(model, key) {
-        True -> #(
-          Model(..model, write_error: Some(message), summary_edit: None),
-          fetch_detail(key),
-        )
-        False -> #(model, effect.none())
+        True -> {
+          let summary_edit = case model.summary_edit {
+            // Keep a newer draft if the user already started editing again.
+            Some(_) -> model.summary_edit
+            None -> Some(summary)
+          }
+          #(
+            Model(..model, write_error: Some(message), summary_edit:),
+            fetch_detail(key),
+          )
+        }
+        False -> #(model, fetch_detail(key))
       }
     GotTransitions(key, Ok(transitions)) ->
       case is_selected(model, key) {
@@ -631,11 +644,11 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       case is_selected(model, key) {
         True -> #(
           Model(..model, write_error: Some(message)),
-          // The optimistic change is rolled back by the fresh detail; its
-          // response also syncs the matching list row.
+          // The optimistic change is rolled back by the fresh detail; when
+          // the panel is closed, GotDetail still syncs the matching row.
           fetch_detail(key),
         )
-        False -> #(model, effect.none())
+        False -> #(model, fetch_detail(key))
       }
     SetFlagged(flagged) ->
       case selected_key(model) {
@@ -654,11 +667,11 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       case is_selected(model, key) {
         True -> #(
           Model(..model, write_error: Some(message)),
-          // The optimistic change is rolled back by the fresh detail; its
-          // response also syncs the matching list row.
+          // The optimistic change is rolled back by the fresh detail; when
+          // the panel is closed, GotDetail still syncs the matching row.
           fetch_detail(key),
         )
-        False -> #(model, effect.none())
+        False -> #(model, fetch_detail(key))
       }
     GotResolutions(Ok(resolutions)) -> #(
       Model(
@@ -1274,7 +1287,7 @@ fn put_summary(key: String, summary: String) -> Effect(Msg) {
   fetch.put_json(
     "/jira/issue/" <> key <> "/summary",
     json.object([#("summary", json.string(summary))]) |> json.to_string,
-    fn(result) { GotSummarySaved(key, result) },
+    fn(result) { GotSummarySaved(key, summary, result) },
   )
 }
 
@@ -2518,7 +2531,7 @@ fn detail_panel(model: Model, detail: Detail) -> Element(Msg) {
             html.p([attribute.class("jv-error")], [text("Error: " <> message)]),
           ]
           DetailLoaded(info) -> [
-            flag_section(info.issue),
+            flag_section(info.issue, info.flags_supported),
             assignee_section(model, info.issue),
             case model.write_error {
               Some(message) ->
@@ -2636,17 +2649,21 @@ fn detail_meta(detail: Detail) -> String {
 }
 
 /// The open issue's flag state, with the control that toggles it.
-fn flag_section(issue: Issue) -> Element(Msg) {
-  html.label([attribute.class("jv-detail-flag")], [
-    html.input([
-      attribute.type_("checkbox"),
-      attribute.class("jv-flag-toggle"),
-      attribute.title("Flag or unflag this issue"),
-      attribute.checked(issue.flagged),
-      event.on_check(SetFlagged),
-    ]),
-    text("Flagged"),
-  ])
+fn flag_section(issue: Issue, flags_supported: Bool) -> Element(Msg) {
+  case flags_supported {
+    False -> element.none()
+    True ->
+      html.label([attribute.class("jv-detail-flag")], [
+        html.input([
+          attribute.type_("checkbox"),
+          attribute.class("jv-flag-toggle"),
+          attribute.title("Flag or unflag this issue"),
+          attribute.checked(issue.flagged),
+          event.on_check(SetFlagged),
+        ]),
+        text("Flagged"),
+      ])
+  }
 }
 
 /// The open issue's labels with per-chip remove buttons and an add form. The

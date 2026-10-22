@@ -152,6 +152,18 @@ pub fn search_page_query_test() {
   ])
 }
 
+// a site without the Flagged field reads unflagged: no trailing comma, no
+// empty custom-field entry in the allowlist
+pub fn fields_skip_missing_flag_test() {
+  jira.search_fields("")
+  |> should.equal("summary,status,assignee,updated,labels")
+
+  jira.issue_fields("")
+  |> should.equal(
+    "summary,description,status,assignee,updated,comment,worklog,attachment,labels",
+  )
+}
+
 // the Flagged field is discovered per site; the id is not stable across
 // Jira Cloud instances, so these tests pin the name-based lookup.
 
@@ -190,13 +202,13 @@ pub fn editmeta_flag_option_decoder_test() {
     "{\"fields\":{\"customfield_10300\":{\"allowedValues\":[{\"id\":\"10019\",\"value\":\"Impediment\"}]}}}",
     jira.flag_option_decoder("customfield_10300"),
   )
-  |> should.equal(Ok(Some("Impediment")))
+  |> should.equal(Ok(Some(jira.FlagOption("value", "Impediment"))))
 
   json.parse(
     "{\"fields\":{\"customfield_10300\":{\"allowedValues\":[{\"id\":\"10019\"}]}}}",
     jira.flag_option_decoder("customfield_10300"),
   )
-  |> should.equal(Ok(Some("10019")))
+  |> should.equal(Ok(Some(jira.FlagOption("id", "10019"))))
 
   json.parse(
     "{\"fields\":{\"customfield_10300\":{}}}",
@@ -236,14 +248,14 @@ pub fn flag_value_uses_override_test() {
     "KAN-1",
     jira.FlagField("customfield_10021", jira.OptionField),
   )
-  |> should.equal(Ok("Flagged"))
+  |> should.equal(Ok(jira.FlagOption("value", "Flagged")))
 
   jira.flag_value(
     cfg,
     "KAN-1",
     jira.FlagField("customfield_10021", jira.BooleanField),
   )
-  |> should.equal(Ok(""))
+  |> should.equal(Ok(jira.FlagOption("value", "")))
 }
 
 // test issues for the private-ordering merge
@@ -533,44 +545,43 @@ pub fn issue_detail_decoder_with_embeds_test() {
     types.issue_detail_decoder(flagged_field),
   )
   |> should.equal(
-    Ok(
-      types.IssueDetail(
-        issue: types.Issue(
-          key: "SAM1-11",
-          id: "10013",
-          summary: "Phase 4 verification",
-          status: types.Status("Done", "done"),
-          assignee: None,
-          labels: ["phase-4"],
-          flagged: True,
-          updated: "2026-10-18",
-        ),
-        description: [],
-        comments: [
-          types.Comment(
-            author: "Jeffery Merckens",
-            created: "2026-10-18T19:38:02.298-0400",
-            body: [
-              adf.AdfNode(
-                "paragraph",
-                "",
-                [adf.AdfNode("text", "c1", [], [])],
-                [],
-              ),
-            ],
-          ),
-        ],
-        worklog: [
-          types.WorklogEntry(
-            author: "Jeffery Merckens",
-            started: "2026-10-18T23:38:02.298+0000",
-            time_spent: "25m",
-            body: [],
-          ),
-        ],
-        attachments: [],
+    Ok(types.IssueDetail(
+      issue: types.Issue(
+        key: "SAM1-11",
+        id: "10013",
+        summary: "Phase 4 verification",
+        status: types.Status("Done", "done"),
+        assignee: None,
+        labels: ["phase-4"],
+        flagged: True,
+        updated: "2026-10-18",
       ),
-    ),
+      description: [],
+      comments: [
+        types.Comment(
+          author: "Jeffery Merckens",
+          created: "2026-10-18T19:38:02.298-0400",
+          body: [
+            adf.AdfNode(
+              "paragraph",
+              "",
+              [adf.AdfNode("text", "c1", [], [])],
+              [],
+            ),
+          ],
+        ),
+      ],
+      worklog: [
+        types.WorklogEntry(
+          author: "Jeffery Merckens",
+          started: "2026-10-18T23:38:02.298+0000",
+          time_spent: "25m",
+          body: [],
+        ),
+      ],
+      attachments: [],
+      flags_supported: True,
+    )),
   )
 }
 
@@ -814,7 +825,7 @@ pub fn parse_flagged_body_test() {
 pub fn flagged_update_body_test() {
   web.flagged_update_body(
     jira.FlagField("customfield_10300", jira.OptionField),
-    "Impediment",
+    jira.FlagOption("value", "Impediment"),
     True,
   )
   |> should.equal(
@@ -823,21 +834,28 @@ pub fn flagged_update_body_test() {
 
   web.flagged_update_body(
     jira.FlagField("customfield_10300", jira.OptionField),
-    "Impediment",
+    jira.FlagOption("id", "10019"),
+    True,
+  )
+  |> should.equal("{\"fields\":{\"customfield_10300\":[{\"id\":\"10019\"}]}}")
+
+  web.flagged_update_body(
+    jira.FlagField("customfield_10300", jira.OptionField),
+    jira.FlagOption("value", "Impediment"),
     False,
   )
   |> should.equal("{\"fields\":{\"customfield_10300\":[]}}")
 
   web.flagged_update_body(
     jira.FlagField("customfield_10300", jira.BooleanField),
-    "",
+    jira.FlagOption("value", ""),
     True,
   )
   |> should.equal("{\"fields\":{\"customfield_10300\":true}}")
 
   web.flagged_update_body(
     jira.FlagField("customfield_10300", jira.BooleanField),
-    "",
+    jira.FlagOption("value", ""),
     False,
   )
   |> should.equal("{\"fields\":{\"customfield_10300\":false}}")

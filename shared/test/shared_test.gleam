@@ -280,6 +280,26 @@ pub fn decode_issue_detail_without_description_test() {
   detail.description |> should.equal([])
 }
 
+// no field id means the site has no discoverable Flagged field: the read
+// still succeeds, unflagged, and tells the UI to hide the flag control.
+pub fn decode_issue_detail_without_flag_field_test() {
+  let assert Ok(detail) =
+    parse(
+      "{
+        \"id\": \"1\",
+        \"key\": \"KAN-1\",
+        \"fields\": {
+          \"summary\": \"Create a demo project\",
+          \"updated\": \"2026-10-17T10:00:00.000-0400\",
+          \"status\": {\"name\": \"To Do\"}
+        }
+      }",
+      types.issue_detail_decoder(""),
+    )
+  detail.flags_supported |> should.be_false
+  detail.issue.flagged |> should.be_false
+}
+
 // adf: recursive tree decode, tested against the real shapes captured from
 // the site (doc → paragraph → text; doc → bulletList → listItem → paragraph)
 
@@ -519,6 +539,93 @@ pub fn basic_document_heading_test() {
   )
 }
 
+pub fn basic_document_skips_empty_markers_test() {
+  adf.basic_document("- \n- two")
+  |> should.equal(
+    adf.AdfNode(
+      "doc",
+      "",
+      [
+        adf.AdfNode(
+          "bulletList",
+          "",
+          [
+            adf.AdfNode(
+              "listItem",
+              "",
+              [
+                adf.AdfNode(
+                  "paragraph",
+                  "",
+                  [
+                    adf.AdfNode("text", "two", [], []),
+                  ],
+                  [],
+                ),
+              ],
+              [],
+            ),
+          ],
+          [],
+        ),
+      ],
+      [],
+    ),
+  )
+
+  adf.basic_document("# \nBody")
+  |> should.equal(
+    adf.AdfNode(
+      "doc",
+      "",
+      [
+        adf.AdfNode(
+          "paragraph",
+          "",
+          [
+            adf.AdfNode("text", "Body", [], []),
+          ],
+          [],
+        ),
+      ],
+      [],
+    ),
+  )
+
+  adf.basic_document("1. \n2. two")
+  |> should.equal(
+    adf.AdfNode(
+      "doc",
+      "",
+      [
+        adf.AdfNode(
+          "orderedList",
+          "",
+          [
+            adf.AdfNode(
+              "listItem",
+              "",
+              [
+                adf.AdfNode(
+                  "paragraph",
+                  "",
+                  [
+                    adf.AdfNode("text", "two", [], []),
+                  ],
+                  [],
+                ),
+              ],
+              [],
+            ),
+          ],
+          [],
+        ),
+      ],
+      [],
+    ),
+  )
+}
+
 pub fn basic_document_keeps_years_as_prose_test() {
   adf.basic_document("2026. was a good year")
   |> should.equal(
@@ -609,6 +716,7 @@ pub fn issue_detail_json_round_trip_test() {
       attachments: [
         types.Attachment("10001", "screenshot.png", "image/png", 2048),
       ],
+      flags_supported: True,
     )
   let response = types.issue_detail_to_json(detail) |> json.to_string
   parse(response, types.app_issue_detail_decoder())

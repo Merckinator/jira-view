@@ -101,7 +101,8 @@ Configuration is read from the environment on each request:
 - The native Flagged field is discovered per site by its name. If your site
   uses a renamed field or the write fails with “not on the appropriate
   screen”, set `JIRA_FLAGGED_FIELD` and/or add Flagged to the issue Edit
-  screen.
+  screen. If the field cannot be found at all, issues still load; the flag
+  control is hidden and no flag column tint is shown.
 - A view is capped at 2000 issues.
 
 ## Security & limitations

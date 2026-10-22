@@ -68,6 +68,9 @@ pub type IssueDetail {
     comments: List(Comment),
     worklog: List(WorklogEntry),
     attachments: List(Attachment),
+    /// Whether this site has a discoverable Flagged field. The UI hides the
+    /// flag control when false; reads still work unflagged.
+    flags_supported: Bool,
   )
 }
 
@@ -381,6 +384,7 @@ pub fn issue_detail_decoder(
     comments:,
     worklog:,
     attachments:,
+    flags_supported: flagged_field != "",
   ))
 }
 
@@ -408,12 +412,18 @@ pub fn app_issue_detail_decoder() -> decode.Decoder(IssueDetail) {
     [],
     decode.list(app_attachment_decoder()),
   )
+  use flags_supported <- decode.optional_field(
+    "flags_supported",
+    True,
+    decode.bool,
+  )
   decode.success(IssueDetail(
     issue:,
     description:,
     comments:,
     worklog:,
     attachments:,
+    flags_supported:,
   ))
 }
 
@@ -641,6 +651,7 @@ pub fn issue_detail_to_json(detail: IssueDetail) -> Json {
     #("comments", json.array(detail.comments, comment_to_json)),
     #("worklog", json.array(detail.worklog, worklog_to_json)),
     #("attachments", json.array(detail.attachments, attachment_to_json)),
+    #("flags_supported", json.bool(detail.flags_supported)),
   ])
 }
 

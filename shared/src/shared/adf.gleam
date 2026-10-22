@@ -126,20 +126,26 @@ type BasicState {
 }
 
 fn parse_basic_line(state: BasicState, line: String) -> BasicState {
+  // A marker with no text ("- ", "1. ", "# ") is dropped: an empty list item
+  // or heading becomes a text node with no text, which Jira rejects.
   case bullet_item(line) {
+    Some("") -> state
     Some(item) -> add_list_item(flush_paragraph(state), BulletListKind, item)
     None ->
       case ordered_item(line) {
+        Some("") -> state
         Some(item) ->
           add_list_item(flush_paragraph(state), OrderedListKind, item)
         None ->
           case string.starts_with(line, "# ") {
             True ->
-              state
-              |> flush_blocks
-              |> prepend_block(
-                heading_node(string.trim(string.drop_start(line, 2))),
-              )
+              case string.trim(string.drop_start(line, 2)) {
+                "" -> state
+                text ->
+                  state
+                  |> flush_blocks
+                  |> prepend_block(heading_node(text))
+              }
             False -> add_paragraph_line(flush_list(state), string.trim(line))
           }
       }

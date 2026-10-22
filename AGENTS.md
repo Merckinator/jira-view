@@ -40,7 +40,7 @@ Gleeunit discovers every `test/**/*_test.gleam` function whose name ends in `_te
 
 - Add routes in the `case path_segments` in `src/jira_view/web.gleam`.
 - Jira search uses the modern `/rest/api/3/search/jql`, not deprecated `/rest/api/3/search`; boards use `/rest/agile/1.0`. A view is capped at 2000 issues.
-- The Flagged custom field id varies between Cloud sites. It is discovered by name via `/rest/api/3/field`, cached per base URL in `persistent_term`, and overridable with `JIRA_FLAGGED_FIELD`; the option value is overridable with `JIRA_FLAGGED_VALUE`. Do not hardcode a `customfield_…` id.
+- The Flagged custom field id varies between Cloud sites. It is discovered by name via `/rest/api/3/field`, cached per base URL in `persistent_term`, and overridable with `JIRA_FLAGGED_FIELD`; the option value is overridable with `JIRA_FLAGGED_VALUE`. Do not hardcode a `customfield_…` id. Read paths use `jira.flag_field_or_none`, so a site without the field loads unflagged and the UI hides the control (`IssueDetail.flags_supported`); flag writes still report the missing field.
 - `/jira/issue/:key` is normalized to the app shape (issue + ADF content lists + pruned comments/worklog/attachments), so the UI never needs Jira custom-field ids.
 - Summaries are edited via `PUT /jira/issue/:key/summary` (trimmed, non-empty). Descriptions are intentionally read-only; `/jira/issue/:key/open` redirects to `<JIRA_BASE_URL>/browse/<key>` for fuller editing.
 - New comments are built with `adf.basic_document`: blank lines separate paragraphs, `- ` bullets, `1. ` numbered lists, `# ` headings. Existing comment/description ADF still renders read-only.
